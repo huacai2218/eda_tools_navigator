@@ -19,6 +19,7 @@ eda_tools_navigator/
   data/                  # SQLite 索引数据库
   scripts/               # 打包与升级脚本
   VERSION                # 代码版本号
+  RELEASE_NOTES.md       # 每个版本的发布说明
   .env.example           # 环境变量模板
   requirements.txt       # Python 依赖
 ```
@@ -362,6 +363,16 @@ cd /path/to/eda_tools_navigator
 chmod +x scripts/*.sh
 ./scripts/make_release.sh
 ```
+
+生成 release 包前，必须先在 `RELEASE_NOTES.md` 中增加当前 `VERSION` 对应的条目，例如：
+
+```markdown
+## 0.1.16 - 2026-05-20
+
+- 说明本版本新增、修复或调整的内容。
+```
+
+如果缺少当前版本的 release note，脚本会停止打包，避免漏写发布说明。
 
 输出示例：
 

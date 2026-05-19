@@ -148,6 +148,7 @@ copy_item() {
 }
 
 copy_item "VERSION"
+copy_item "RELEASE_NOTES.md"
 copy_item "README.md"
 copy_item "requirements.txt"
 copy_item "server.py"
