@@ -12,7 +12,7 @@
 ## 目录结构
 
 ```text
-eda-tools-reader/
+eda_tools_navigator/
   server.py              # 后端服务、索引、检索、LLM 调用
   static/                # 前端网页
   manuals/               # 手册文件，按工具分目录存放
@@ -52,7 +52,7 @@ python3 server.py --host 0.0.0.0 --port 8765 --debug
 进入项目目录：
 
 ```bash
-cd /Users/aidenw/workspace/eda-tools-reader
+cd /path/to/eda_tools_navigator
 ```
 
 安装 Python 依赖：
@@ -99,7 +99,7 @@ python3 server.py --port 8766
 如果希望关闭终端窗口后服务仍继续运行，可以使用 `nohup`：
 
 ```bash
-cd /Users/aidenw/workspace/eda-tools-reader
+cd /path/to/eda_tools_navigator
 mkdir -p logs
 nohup python3 server.py --host 127.0.0.1 --port 8765 > logs/server.log 2>&1 &
 echo $! > logs/server.pid
@@ -358,7 +358,7 @@ sudo systemctl reload nginx
 在本机项目目录执行：
 
 ```bash
-cd /Users/aidenw/workspace/eda-tools-reader
+cd /path/to/eda_tools_navigator
 chmod +x scripts/*.sh
 ./scripts/make_release.sh
 ```
@@ -366,7 +366,7 @@ chmod +x scripts/*.sh
 输出示例：
 
 ```text
-/Users/aidenw/workspace/eda-tools-reader/dist/eda-tools-reader-0.1.0-20260518-120000.tar.gz
+/path/to/eda_tools_navigator/dist/eda-tools-reader-0.1.0-20260518-120000.tar.gz
 ```
 
 release 包只包含程序文件，不包含 `manuals/`、`data/`、`.env`。
