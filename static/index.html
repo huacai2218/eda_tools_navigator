@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EDA Tools Navigator</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="chat-panel" aria-label="Manual chat">
+        <header class="topbar">
+          <div>
+            <h1>EDA Tools Navigator</h1>
+            <div id="titleMeta" class="title-meta" aria-label="系统状态">
+              <span class="status-pill muted">版本读取中</span>
+              <span class="status-pill muted">LLM 状态读取中</span>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <button id="settingsBtn" type="button">LLM 设置</button>
+            <button id="reindexBtn" class="debug-only hidden" type="button">重建索引</button>
+          </div>
+        </header>
+
+        <div id="messages" class="messages">
+          <article class="message assistant">
+            <div class="bubble">
+              你可以询问已导入 user guide 里的命令、参数、流程或报错信息。我会优先给出来源，方便回到原文确认。
+            </div>
+          </article>
+        </div>
+
+        <form id="chatForm" class="composer" novalidate>
+          <textarea id="question" rows="2" placeholder="例如：set_clock_uncertainty 在哪个场景使用？"></textarea>
+          <button type="submit">发送</button>
+        </form>
+      </section>
+
+      <aside class="side-panel" aria-label="Manual summary">
+        <h2>Manual 汇总</h2>
+
+        <section class="side-panel-body">
+          <div class="info no-border">
+            <h3>当前工具</h3>
+            <ul id="toolList">
+              <li>暂无数据</li>
+            </ul>
+            <div id="indexSummary" class="index-summary">
+              <div><strong id="docCount">0</strong><span>文档</span></div>
+              <div><strong id="chunkCount">0</strong><span>索引片段</span></div>
+            </div>
+            <div id="manualChart" class="manual-chart"></div>
+            <p id="lastImportSummary" class="summary-note debug-only hidden">本次导入：暂无</p>
+          </div>
+
+          <div id="importPanel" class="info debug-only hidden">
+            <h3>手册导入</h3>
+            <form id="uploadForm" class="upload-form">
+              <label>
+                工具名称
+                <input id="tool" name="tool" placeholder="例如 PrimeTime / Innovus" value="General" />
+              </label>
+              <label>
+                User guide 文件
+                <input id="files" name="files" type="file" multiple accept=".pdf,.txt,.md,.markdown,.html,.htm" />
+              </label>
+              <button type="submit">上传并索引</button>
+            </form>
+          </div>
+
+          <div class="info">
+            <h3>联系方式</h3>
+            <p>如有问题请联系 zlwang。</p>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+
+    <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-backdrop" data-close-settings></div>
+      <section class="modal-card">
+        <header class="modal-header">
+          <div>
+            <h2 id="settingsTitle">个人 LLM 设置</h2>
+            <p>设置只保存在当前浏览器，不会覆盖服务器或其他同事的配置。</p>
+          </div>
+          <button id="closeSettingsBtn" class="icon-button" type="button" aria-label="关闭设置">×</button>
+        </header>
+        <form id="settingsForm" class="settings-form">
+          <fieldset>
+            <legend>接口地址</legend>
+            <label>
+              LLM Base URL
+              <input id="llmBaseUrl" name="llm_base_url" placeholder="https://your-llm.example.com/v1" autocomplete="off" />
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>模型与密钥</legend>
+            <label>
+              Model
+              <input id="llmModel" name="llm_model" placeholder="internal-llm" autocomplete="off" />
+            </label>
+            <label>
+              API Key
+              <input id="llmApiKey" name="llm_api_key" type="password" autocomplete="new-password" />
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>请求控制</legend>
+            <label>
+              Timeout 秒
+              <input id="llmTimeout" name="llm_timeout" type="number" min="5" max="600" step="1" />
+            </label>
+          </fieldset>
+          <p id="apiKeyHint" class="field-hint">保存后后续检索会使用当前浏览器里的 LLM 设置。</p>
+          <div class="modal-actions">
+            <button id="saveSettingsBtn" type="submit">保存设置</button>
+            <button id="clearSettingsBtn" type="button" class="secondary-button">清空</button>
+          </div>
+          <p id="settingsStatus" class="toast" role="status"></p>
+        </form>
+      </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
