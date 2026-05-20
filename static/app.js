@@ -8,12 +8,11 @@ const sessionMeta = $("#sessionMeta");
 const logoutBtn = $("#logoutBtn");
 const titleMeta = $("#titleMeta");
 const materialsList = $("#materialsList");
+const quickManuals = $("#quickManuals");
+const manualSearchForm = $("#manualSearchForm");
+const manualSearch = $("#manualSearch");
+const manualOptions = $("#manualOptions");
 const materialFrame = $("#materialFrame");
-const adminPanel = $("#adminPanel");
-const adminStatus = $("#adminStatus");
-const uploadForm = $("#uploadForm");
-const createUserForm = $("#createUserForm");
-const reindexBtn = $("#reindexBtn");
 const workPanel = $("#workPanel");
 const splitter = $("#splitter");
 const togglePanelBtn = $("#togglePanelBtn");
@@ -41,6 +40,7 @@ let currentUser = null;
 let activeSourcePath = "";
 let latestAnnotationMarkdown = "";
 let directoryHandle = null;
+let htmlManuals = [];
 
 async function readJsonResponse(res) {
   let data = {};
@@ -238,8 +238,6 @@ function renderBadges(status) {
   titleMeta.innerHTML = "";
   [
     `版本 ${status.version || "unknown"}`,
-    `${status.documents || 0} docs`,
-    `${status.chunks || 0} chunks`,
     personalLlmEnabled() ? "个人 LLM 已配置" : "本地检索模式",
   ].forEach((text) => {
     const badge = document.createElement("span");
@@ -249,27 +247,64 @@ function renderBadges(status) {
   });
 }
 
+function manualButton(item, className = "material-link") {
+  const button = document.createElement("button");
+  button.className = className;
+  button.type = "button";
+  button.textContent = item.manual_id || item.title;
+  button.title = item.source_path;
+  button.addEventListener("click", () => openMaterial(item.view_url, item.source_path));
+  return button;
+}
+
+function renderManualSearch(manuals = []) {
+  htmlManuals = manuals;
+  manualOptions.innerHTML = "";
+  manuals.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.manual_id;
+    option.label = `${item.title} - ${item.source_path}`;
+    manualOptions.appendChild(option);
+  });
+}
+
+function openManualFromSearch() {
+  const query = manualSearch.value.trim().toLowerCase();
+  if (!query) return;
+  const item = htmlManuals.find((manual) => manual.manual_id.toLowerCase() === query)
+    || htmlManuals.find((manual) => manual.manual_id.toLowerCase().includes(query) || manual.title.toLowerCase().includes(query));
+  if (item) {
+    manualSearch.value = item.manual_id;
+    openMaterial(item.view_url, item.source_path);
+  }
+}
+
 function renderMaterials(data) {
   materialsList.innerHTML = "";
-  if (!data.groups || !data.groups.length) {
-    materialsList.innerHTML = '<p class="empty">暂无 raw 材料。管理员需要把资料放到 raw/manuals 或 raw/books 后重建索引。</p>';
+  quickManuals.innerHTML = "";
+  renderManualSearch(data.html_manuals || []);
+
+  (data.quick_manuals || []).forEach((item) => {
+    quickManuals.appendChild(manualButton(item, "quick-manual"));
+  });
+
+  if (!data.html_manuals || !data.html_manuals.length) {
+    materialsList.innerHTML = '<p class="empty">暂无 HTML manual 页面。管理员需要把网页手册放到 raw/manuals/**/htmldocs/*/index.html 后在后台运行 reindex。</p>';
     return;
   }
-  data.groups.forEach((group) => {
+  const grouped = new Map();
+  data.html_manuals.forEach((item) => {
+    const group = grouped.get(item.group) || [];
+    group.push(item);
+    grouped.set(item.group, group);
+  });
+  grouped.forEach((manuals, groupName) => {
     const section = document.createElement("section");
     section.className = "material-group";
     const heading = document.createElement("h2");
-    heading.textContent = `${group.material_type} / ${group.group}`;
+    heading.textContent = groupName;
     section.appendChild(heading);
-    group.documents.forEach((doc) => {
-      const button = document.createElement("button");
-      button.className = "material-link";
-      button.type = "button";
-      button.textContent = doc.title;
-      button.title = doc.source_path;
-      button.addEventListener("click", () => openMaterial(doc.view_url, doc.source_path));
-      section.appendChild(button);
-    });
+    manuals.forEach((item) => section.appendChild(manualButton(item)));
     materialsList.appendChild(section);
   });
   if (data.default_view_url && !materialFrame.src) openMaterial(data.default_view_url, data.default_source_path);
@@ -289,8 +324,7 @@ async function showApp(user) {
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
   sessionMeta.textContent = `${user.username} (${user.role})`;
-  adminPanel.classList.toggle("hidden", user.role !== "admin");
-  addMessage("assistant", "已进入工作台。你可以在左侧选择 raw material，在右侧询问 manual/wiki 或注解脚本。");
+  addMessage("assistant", "已进入工作台。你可以在左侧切换 manual 页面，在右侧询问 manual/wiki 或注解脚本。");
   await refreshAppData();
 }
 
@@ -349,52 +383,16 @@ chatForm.addEventListener("submit", async (event) => {
   }
 });
 
-uploadForm.addEventListener("submit", async (event) => {
+manualSearchForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const button = uploadForm.querySelector("button");
-  button.disabled = true;
-  button.textContent = "上传中...";
-  try {
-    const data = await fetch("/api/upload", { method: "POST", body: new FormData(uploadForm) }).then(readJsonResponse);
-    adminStatus.textContent = `已保存 ${data.saved} 个文件。`;
-    uploadForm.reset();
-    $("#group").value = "General";
-    await refreshAppData();
-  } catch (error) {
-    adminStatus.textContent = networkErrorMessage(error);
-  } finally {
-    button.disabled = false;
-    button.textContent = "上传并索引";
-  }
+  openManualFromSearch();
 });
 
-reindexBtn.addEventListener("click", async () => {
-  reindexBtn.disabled = true;
-  reindexBtn.textContent = "重建中...";
-  try {
-    const data = await fetch("/api/reindex", { method: "POST" }).then(readJsonResponse);
-    adminStatus.textContent = `索引完成：${data.files} files, ${data.chunks} chunks, ${data.wiki_pages || 0} wiki pages。`;
-    await refreshAppData();
-  } catch (error) {
-    adminStatus.textContent = networkErrorMessage(error);
-  } finally {
-    reindexBtn.disabled = false;
-    reindexBtn.textContent = "重建索引 / 生成 Wiki";
-  }
-});
-
-createUserForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const data = await fetch("/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: $("#newUsername").value, password: $("#newPassword").value, role: "user" }),
-    }).then(readJsonResponse);
-    adminStatus.textContent = `已创建用户 ${data.user.username}`;
-    createUserForm.reset();
-  } catch (error) {
-    adminStatus.textContent = networkErrorMessage(error);
+manualSearch.addEventListener("change", openManualFromSearch);
+manualSearch.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    openManualFromSearch();
   }
 });
 

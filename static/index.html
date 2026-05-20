@@ -30,47 +30,24 @@
       <aside class="materials-panel" aria-label="Raw materials">
         <header>
           <div>
-            <h1>Materials</h1>
+            <h1>Navigator</h1>
             <p id="sessionMeta">未登录</p>
           </div>
           <button id="logoutBtn" class="secondary-button" type="button">退出</button>
         </header>
         <div id="titleMeta" class="title-meta" aria-label="系统状态"></div>
-        <div id="materialsList" class="materials-list"></div>
-        <section id="adminPanel" class="admin-panel hidden">
-          <h2>管理员</h2>
-          <button id="reindexBtn" type="button">重建索引 / 生成 Wiki</button>
-          <form id="uploadForm" class="stack-form">
+        <section class="navigator-tools" aria-label="Manual navigation">
+          <h2>Quick Manuals</h2>
+          <div id="quickManuals" class="quick-manuals"></div>
+          <form id="manualSearchForm" class="manual-search" autocomplete="off">
             <label>
-              材料类型
-              <select id="materialType" name="material_type">
-                <option value="manual">Manual</option>
-                <option value="book">Book</option>
-              </select>
+              搜索页面
+              <input id="manualSearch" list="manualOptions" placeholder="输入 manual id，例如 calbr_ver_user" />
             </label>
-            <label>
-              分组
-              <input id="group" name="group" placeholder="例如 Calibre / Timing" value="General" />
-            </label>
-            <label>
-              文件
-              <input id="files" name="files" type="file" multiple accept=".pdf,.txt,.md,.markdown,.html,.htm" />
-            </label>
-            <button type="submit">上传并索引</button>
+            <datalist id="manualOptions"></datalist>
           </form>
-          <form id="createUserForm" class="stack-form">
-            <label>
-              新用户
-              <input id="newUsername" name="username" autocomplete="off" />
-            </label>
-            <label>
-              初始密码
-              <input id="newPassword" name="password" type="password" autocomplete="new-password" />
-            </label>
-            <button type="submit">创建普通用户</button>
-          </form>
-          <p id="adminStatus" class="toast" role="status"></p>
         </section>
+        <div id="materialsList" class="materials-list"></div>
       </aside>
 
       <section class="reader-panel" aria-label="Material viewer">

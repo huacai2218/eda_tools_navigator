@@ -31,7 +31,7 @@ eda_tools_navigator/
 
 默认模式适合团队共享：服务端统一读取部署目录下的 `raw/` 和 `data/`，所有同事登录后看到同一套 raw materials 和 wiki；LLM URL、Model、API key 和 Timeout 由每位同事在网页 `我的设置` 中填写，配置只保存在自己的浏览器 localStorage 中，不会写入服务器 `.env`，也不会覆盖其他同事的设置。
 
-材料导入、用户管理和重建索引只对管理员账号开放。首次部署后先创建管理员：
+网页端不提供上传材料、用户创建或重建索引入口；这些维护动作通过服务器后台命令或保留的 admin API 完成。首次部署后先创建管理员：
 
 ```bash
 python3 server.py --create-admin admin
@@ -210,7 +210,7 @@ LLM_TIMEOUT=120
 
 ### 5. 准备 raw 材料
 
-管理员可以登录网页上传 raw 材料，也可以在服务器上按类型和分组目录放置文件：
+管理员在服务器上按类型和分组目录放置文件：
 
 ```text
 /opt/eda-tools-reader/raw/manuals/<工具名称>/
@@ -243,7 +243,7 @@ source .venv/bin/activate
 python server.py --reindex
 ```
 
-后续新增材料后，可以再次执行上述命令。管理员也可以在网页中上传材料或重建索引。
+后续新增材料后，可以再次执行上述命令。网页端不触发 reindex。
 
 ### 7. 手动启动验证
 
@@ -359,10 +359,10 @@ sudo systemctl reload nginx
 - `.env`：内部 LLM URL、API key 等服务器配置
 - `.venv/`：Python 虚拟环境，可复用并按新依赖更新
 
-升级流程分为两步：
+升级流程有两种：
 
-1. 在开发机或本机项目目录生成 release 包。
-2. 把 release 包上传到服务器，在服务器项目目录执行 `scripts/upgrade.sh`。
+- 完整 release 包：适合标准升级，使用 `scripts/upgrade.sh`。
+- 轻量 patch 包：适合已安装目录快速覆盖程序文件，使用 `scripts/apply_patch.sh`。
 
 ### 1. 生成 release 包
 
@@ -392,12 +392,32 @@ chmod +x scripts/*.sh
 
 release 包只包含程序文件，不包含 `raw/`、`data/`、`.env`。
 
+如果只需要给已安装目录打快捷补丁，也可以生成 patch 包：
+
+```bash
+./scripts/make_patch.sh
+```
+
+输出示例：
+
+```text
+/path/to/eda_tools_navigator/dist/eda-tools-reader-patch-0.1.18-20260520-120000.tar.gz
+```
+
+patch 包同样只包含程序文件，不包含 `raw/`、`data/`、`.env`、`.venv/`。
+
 ### 2. 上传 release 包到服务器
 
 示例：
 
 ```bash
 scp dist/eda-tools-reader-*.tar.gz user@server:/tmp/
+```
+
+如果使用 patch 包：
+
+```bash
+scp dist/eda-tools-reader-patch-*.tar.gz user@server:/tmp/
 ```
 
 ### 3. 在服务器上一键升级
@@ -420,6 +440,19 @@ cd /opt/eda-tools-reader
 7. 如果服务器存在 `eda-tools-reader` systemd 服务，自动重启服务。
 
 依赖安装会在覆盖代码之前执行。如果依赖安装失败，脚本会停止，避免出现代码已升级但依赖未安装的半升级状态。
+
+已安装目录快速打 patch：
+
+```bash
+cd /opt/eda-tools-reader
+./scripts/apply_patch.sh /tmp/eda-tools-reader-patch-0.1.18-20260520-120000.tar.gz
+```
+
+patch 脚本会备份当前程序文件到 `backups/pre-patch-<时间>.tar.gz`，覆盖程序文件，保留 `raw/`、`data/`、`.env`、`.venv/`，并执行 `server.py` 语法检查。需要重建 raw/wiki 索引时，打完 patch 后单独执行：
+
+```bash
+python3 server.py --reindex
+```
 
 ### 4. 升级后检查
 
@@ -542,7 +575,7 @@ LLM_TIMEOUT      请求超时时间，默认 120 秒
 
 ## 性能优化说明
 
-问答时服务端会缓存短时间内的增量索引检查结果，避免每次提问都扫描整套 `raw/`；上传和手动重建索引仍会立即更新索引。LLM 上下文默认只发送排名靠前的少量片段，以降低接口耗时。
+问答时服务端会缓存短时间内的增量索引检查结果，避免每次提问都扫描整套 `raw/`；后台上传 API 和手动重建索引仍会立即更新索引。LLM 上下文默认只发送排名靠前的少量片段，以降低接口耗时。
 
 ## 引用与原文查看
 
@@ -574,7 +607,7 @@ raw/books/
 python3 server.py --reindex
 ```
 
-管理员可在网页中执行上传或重建索引；普通用户没有这些入口和 API 权限。
+重建索引请在服务器后台执行；普通用户没有上传或 reindex API 权限。
 
 ## 迁移
 
@@ -593,7 +626,7 @@ python3 server.py --reindex
 ## 注意事项
 
 - 项目使用本地账号密码登录；首次部署后必须先创建管理员账号。
-- 上传 raw 材料、创建用户、重建索引和生成 wiki 只允许管理员执行。
+- 上传 raw 材料、创建用户、重建索引和生成 wiki 只允许管理员通过后台命令或 admin API 执行；网页端不提供这些入口。
 - 团队成员的内部 API key 保存在各自浏览器 localStorage 中；不要在公共电脑长期保存个人 key。
 - 服务器 `.env` 已加入 `.gitignore`，不要把内部 API key 写入 `server.py` 或提交到版本库。
 

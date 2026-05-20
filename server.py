@@ -49,6 +49,14 @@ PROTECTED_API_PREFIXES = ("/api/materials", "/api/wiki/search", "/api/chat", "/a
 ADMIN_API_PATHS = {"/api/upload", "/api/reindex", "/api/users", "/api/users/reset-password"}
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".html", ".htm", ".pdf"}
 RAW_MATERIAL_TYPES = {"manual": "manuals", "book": "books"}
+QUICK_MANUAL_IDS = (
+    "svrf_ur",
+    "calbr_perc_user",
+    "calbr_pmatch_user",
+    "xact_user",
+    "calbr_opcv_useref",
+)
+DEFAULT_MANUAL_ID = "calbr_ver_user"
 
 
 QUERY_STOP_WORDS = {
@@ -1537,6 +1545,39 @@ def material_view_url(source_path: str) -> str:
     return f"/source?path={quote(source_path)}"
 
 
+def html_manual_id(path: Path) -> str:
+    return path.parent.name
+
+
+def html_manual_title(manual_id: str) -> str:
+    return manual_id.replace("_", " ")
+
+
+def html_manual_items() -> list[dict[str, Any]]:
+    root = RAW_DIR / "manuals"
+    if not root.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*/htmldocs/*/index.html")):
+        manual_id = html_manual_id(path)
+        source_path = relative_source(path)
+        try:
+            rel = path.relative_to(RAW_DIR)
+            group = rel.parts[1] if len(rel.parts) > 1 else "General"
+        except ValueError:
+            group = "General"
+        items.append(
+            {
+                "manual_id": manual_id,
+                "title": html_manual_title(manual_id),
+                "group": group,
+                "source_path": source_path,
+                "view_url": manual_url(source_path),
+            }
+        )
+    return items
+
+
 def materials_payload() -> dict[str, Any]:
     conn = connect()
     try:
@@ -1572,9 +1613,23 @@ def materials_payload() -> dict[str, Any]:
             }
         )
 
+    html_manuals = html_manual_items()
+    manual_by_id = {item["manual_id"]: item for item in html_manuals}
+    default_manual = manual_by_id.get(DEFAULT_MANUAL_ID) or (html_manuals[0] if html_manuals else None)
+    quick_manuals = [manual_by_id[manual_id] for manual_id in QUICK_MANUAL_IDS if manual_id in manual_by_id]
+
+    if default_manual:
+        default_source_path = default_manual["source_path"]
+        default_view_url = default_manual["view_url"]
+    else:
+        default_view_url = material_view_url(default_source_path) if default_source_path else ""
+
     return {
         "default_source_path": default_source_path,
-        "default_view_url": material_view_url(default_source_path) if default_source_path else "",
+        "default_view_url": default_view_url,
+        "default_manual_id": default_manual["manual_id"] if default_manual else "",
+        "html_manuals": html_manuals,
+        "quick_manuals": quick_manuals,
         "groups": list(tools.values()),
     }
 
@@ -2488,7 +2543,7 @@ def main() -> None:
     parser.add_argument("--reindex", action="store_true")
     parser.add_argument("--create-admin", metavar="USERNAME", help="create the initial admin user")
     parser.add_argument("--password", help="password for --create-admin; omit to prompt")
-    parser.add_argument("-debug", "--debug", action="store_true", help="show manual import and reindex controls")
+    parser.add_argument("-debug", "--debug", action="store_true", help="enable legacy debug flag; maintenance UI is not shown")
     args = parser.parse_args()
 
     if args.create_admin:

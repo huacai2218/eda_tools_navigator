@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.1.18 - 2026-05-20
+
+- 网页端移除上传、重建索引和用户创建等维护入口；后台仍保留对应 admin API，正式 reindex 通过 `python3 server.py --reindex` 执行。
+- 左侧栏改回 `Navigator`，不再显示 docs/chunks 统计信息。
+- Manual viewer 默认优先打开 `calbr_ver_user/index.html`，并提供 `svrf_ur`、`calbr_perc_user`、`calbr_pmatch_user`、`xact_user`、`calbr_opcv_useref` 快捷切换。
+- 新增 HTML manual 页面搜索自动补齐，来源限定为 `raw/manuals/**/htmldocs/*/index.html`。
+- 新增轻量 patch 包生成和应用脚本，便于已安装目录快速更新程序文件。
+
 ## 0.1.17 - 2026-05-20
 
 - 资料根目录从 `manuals/` 扩展为 `raw/`，支持 `raw/manuals/` 和 `raw/books/`。

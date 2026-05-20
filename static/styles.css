@@ -236,11 +236,33 @@ textarea:focus {
   color: var(--ink);
 }
 
-.admin-panel {
+.navigator-tools {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 12px;
   padding-top: 14px;
+}
+
+.quick-manuals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-manual {
+  background: #edf4f2;
+  color: var(--ink);
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.quick-manual:hover {
+  background: #dce9e5;
+}
+
+.manual-search {
+  display: grid;
+  gap: 8px;
 }
 
 .stack-form {
