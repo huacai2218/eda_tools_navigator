@@ -7,97 +7,114 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <section class="chat-panel" aria-label="Manual chat">
-        <header class="topbar">
-          <div>
-            <h1>EDA Tools Navigator</h1>
-            <div id="titleMeta" class="title-meta" aria-label="系统状态">
-              <span class="status-pill muted">版本读取中</span>
-              <span class="status-pill muted">LLM 状态读取中</span>
-            </div>
-          </div>
-          <div class="topbar-actions">
-            <button id="settingsBtn" type="button">LLM 设置</button>
-            <button id="reindexBtn" class="debug-only hidden" type="button">重建索引</button>
-          </div>
-        </header>
-
-        <div id="messages" class="messages">
-          <article class="message assistant">
-            <div class="bubble">
-              你可以询问已导入 user guide 里的命令、参数、流程或报错信息。我会优先给出来源，方便回到原文确认。
-            </div>
-          </article>
+    <section id="loginView" class="login-view hidden" aria-label="登录">
+      <form id="loginForm" class="login-card">
+        <div>
+          <h1>EDA Tools Navigator</h1>
+          <p>登录后访问 raw materials、wiki 问答和脚本注解工作区。</p>
         </div>
+        <label>
+          用户名
+          <input id="loginUsername" name="username" autocomplete="username" required />
+        </label>
+        <label>
+          密码
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit">登录</button>
+        <p id="loginStatus" class="toast" role="status"></p>
+      </form>
+    </section>
 
-        <form id="chatForm" class="composer" novalidate>
-          <textarea id="question" rows="2" placeholder="例如：set_clock_uncertainty 在哪个场景使用？"></textarea>
-          <button type="submit">发送</button>
-        </form>
-      </section>
-
-      <aside class="side-panel" aria-label="Manual summary">
-        <h2>Manual 汇总</h2>
-
-        <section class="side-panel-body">
-          <div class="info no-border">
-            <h3>当前工具</h3>
-            <ul id="toolList">
-              <li>暂无数据</li>
-            </ul>
-            <div id="indexSummary" class="index-summary">
-              <div><strong id="docCount">0</strong><span>文档</span></div>
-              <div><strong id="chunkCount">0</strong><span>索引片段</span></div>
-            </div>
-            <div id="manualChart" class="manual-chart"></div>
-            <p id="lastImportSummary" class="summary-note debug-only hidden">本次导入：暂无</p>
+    <main id="appView" class="app-shell hidden">
+      <aside class="materials-panel" aria-label="Raw materials">
+        <header>
+          <div>
+            <h1>Materials</h1>
+            <p id="sessionMeta">未登录</p>
           </div>
-
-          <div id="importPanel" class="info debug-only hidden">
-            <h3>手册导入</h3>
-            <form id="uploadForm" class="upload-form">
-              <label>
-                工具名称
-                <input id="tool" name="tool" placeholder="例如 PrimeTime / Innovus" value="General" />
-              </label>
-              <label>
-                User guide 文件
-                <input id="files" name="files" type="file" multiple accept=".pdf,.txt,.md,.markdown,.html,.htm" />
-              </label>
-              <button type="submit">上传并索引</button>
-            </form>
-          </div>
-
-          <div class="info">
-            <h3>联系方式</h3>
-            <p>如有问题请联系 zlwang。</p>
-          </div>
+          <button id="logoutBtn" class="secondary-button" type="button">退出</button>
+        </header>
+        <div id="titleMeta" class="title-meta" aria-label="系统状态"></div>
+        <div id="materialsList" class="materials-list"></div>
+        <section id="adminPanel" class="admin-panel hidden">
+          <h2>管理员</h2>
+          <button id="reindexBtn" type="button">重建索引 / 生成 Wiki</button>
+          <form id="uploadForm" class="stack-form">
+            <label>
+              材料类型
+              <select id="materialType" name="material_type">
+                <option value="manual">Manual</option>
+                <option value="book">Book</option>
+              </select>
+            </label>
+            <label>
+              分组
+              <input id="group" name="group" placeholder="例如 Calibre / Timing" value="General" />
+            </label>
+            <label>
+              文件
+              <input id="files" name="files" type="file" multiple accept=".pdf,.txt,.md,.markdown,.html,.htm" />
+            </label>
+            <button type="submit">上传并索引</button>
+          </form>
+          <form id="createUserForm" class="stack-form">
+            <label>
+              新用户
+              <input id="newUsername" name="username" autocomplete="off" />
+            </label>
+            <label>
+              初始密码
+              <input id="newPassword" name="password" type="password" autocomplete="new-password" />
+            </label>
+            <button type="submit">创建普通用户</button>
+          </form>
+          <p id="adminStatus" class="toast" role="status"></p>
         </section>
       </aside>
-    </main>
 
+      <section class="reader-panel" aria-label="Material viewer">
+        <iframe id="materialFrame" title="Material viewer"></iframe>
+      </section>
 
-    <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-      <div class="modal-backdrop" data-close-settings></div>
-      <section class="modal-card">
-        <header class="modal-header">
-          <div>
-            <h2 id="settingsTitle">个人 LLM 设置</h2>
-            <p>设置只保存在当前浏览器，不会覆盖服务器或其他同事的配置。</p>
+      <div id="splitter" class="splitter" role="separator" aria-label="调整回答区域宽度"></div>
+
+      <aside id="workPanel" class="work-panel" aria-label="Chat and script tools">
+        <header class="work-header">
+          <div class="tabs" role="tablist">
+            <button id="chatTab" class="tab active" type="button">问 Manual</button>
+            <button id="scriptTab" class="tab" type="button">脚本注解</button>
+            <button id="settingsTab" class="tab" type="button">我的设置</button>
           </div>
-          <button id="closeSettingsBtn" class="icon-button" type="button" aria-label="关闭设置">×</button>
+          <button id="togglePanelBtn" class="icon-button" type="button" aria-label="展开或收起右侧区域">⇔</button>
         </header>
-        <form id="settingsForm" class="settings-form">
-          <fieldset>
-            <legend>接口地址</legend>
+
+        <section id="chatPane" class="pane">
+          <div id="messages" class="messages"></div>
+          <form id="chatForm" class="composer" novalidate>
+            <textarea id="question" rows="3" placeholder="例如：set_clock_uncertainty 的语法、options 和用例是什么？"></textarea>
+            <button type="submit">发送</button>
+          </form>
+        </section>
+
+        <section id="scriptPane" class="pane hidden">
+          <div class="script-toolbar">
+            <button id="chooseWorkspaceBtn" class="secondary-button" type="button">选择本地目录</button>
+            <button id="saveScriptBtn" class="secondary-button" type="button">保存脚本</button>
+            <button id="downloadAnnotationBtn" class="secondary-button" type="button" disabled>下载注解</button>
+          </div>
+          <input id="scriptFile" type="file" />
+          <textarea id="scriptText" class="script-input" rows="12" placeholder="粘贴或上传整份工具脚本"></textarea>
+          <button id="annotateBtn" type="button">生成结构化注解</button>
+          <div id="annotationResult" class="annotation-result"></div>
+        </section>
+
+        <section id="settingsPane" class="pane hidden">
+          <form id="settingsForm" class="stack-form">
             <label>
               LLM Base URL
               <input id="llmBaseUrl" name="llm_base_url" placeholder="https://your-llm.example.com/v1" autocomplete="off" />
             </label>
-          </fieldset>
-          <fieldset>
-            <legend>模型与密钥</legend>
             <label>
               Model
               <input id="llmModel" name="llm_model" placeholder="internal-llm" autocomplete="off" />
@@ -106,25 +123,20 @@
               API Key
               <input id="llmApiKey" name="llm_api_key" type="password" autocomplete="new-password" />
             </label>
-          </fieldset>
-          <fieldset>
-            <legend>请求控制</legend>
             <label>
               Timeout 秒
               <input id="llmTimeout" name="llm_timeout" type="number" min="5" max="600" step="1" />
             </label>
-          </fieldset>
-          <p id="apiKeyHint" class="field-hint">保存后后续检索会使用当前浏览器里的 LLM 设置。</p>
-          <div class="modal-actions">
-            <button id="saveSettingsBtn" type="submit">保存设置</button>
-            <button id="clearSettingsBtn" type="button" class="secondary-button">清空</button>
-          </div>
-          <p id="settingsStatus" class="toast" role="status"></p>
-        </form>
-      </section>
-    </div>
+            <div class="form-actions">
+              <button type="submit">保存设置</button>
+              <button id="clearSettingsBtn" type="button" class="secondary-button">清空</button>
+            </div>
+            <p id="settingsStatus" class="toast" role="status"></p>
+          </form>
+        </section>
+      </aside>
+    </main>
 
     <script src="/static/app.js"></script>
   </body>
 </html>
-

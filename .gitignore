@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 manuals/
+raw/
 data/
 logs/
 dist/

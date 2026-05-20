@@ -1,109 +1,46 @@
-const messages = document.querySelector("#messages");
-const chatForm = document.querySelector("#chatForm");
-const questionInput = document.querySelector("#question");
-const uploadForm = document.querySelector("#uploadForm");
-const reindexBtn = document.querySelector("#reindexBtn");
-const settingsBtn = document.querySelector("#settingsBtn");
-const closeSettingsBtn = document.querySelector("#closeSettingsBtn");
-const clearSettingsBtn = document.querySelector("#clearSettingsBtn");
-const settingsModal = document.querySelector("#settingsModal");
-const statusEl = document.querySelector("#status");
-const titleMeta = document.querySelector("#titleMeta");
-const toolList = document.querySelector("#toolList");
-const manualChart = document.querySelector("#manualChart");
-const docCountEl = document.querySelector("#docCount");
-const chunkCountEl = document.querySelector("#chunkCount");
-const lastImportSummary = document.querySelector("#lastImportSummary");
-const settingsForm = document.querySelector("#settingsForm");
-const llmBaseUrlInput = document.querySelector("#llmBaseUrl");
-const llmModelInput = document.querySelector("#llmModel");
-const llmApiKeyInput = document.querySelector("#llmApiKey");
-const llmTimeoutInput = document.querySelector("#llmTimeout");
-const apiKeyHint = document.querySelector("#apiKeyHint");
-const settingsStatus = document.querySelector("#settingsStatus");
+const $ = (selector) => document.querySelector(selector);
+
+const loginView = $("#loginView");
+const appView = $("#appView");
+const loginForm = $("#loginForm");
+const loginStatus = $("#loginStatus");
+const sessionMeta = $("#sessionMeta");
+const logoutBtn = $("#logoutBtn");
+const titleMeta = $("#titleMeta");
+const materialsList = $("#materialsList");
+const materialFrame = $("#materialFrame");
+const adminPanel = $("#adminPanel");
+const adminStatus = $("#adminStatus");
+const uploadForm = $("#uploadForm");
+const createUserForm = $("#createUserForm");
+const reindexBtn = $("#reindexBtn");
+const workPanel = $("#workPanel");
+const splitter = $("#splitter");
+const togglePanelBtn = $("#togglePanelBtn");
+const messages = $("#messages");
+const chatForm = $("#chatForm");
+const questionInput = $("#question");
+const scriptFile = $("#scriptFile");
+const scriptText = $("#scriptText");
+const annotateBtn = $("#annotateBtn");
+const annotationResult = $("#annotationResult");
+const chooseWorkspaceBtn = $("#chooseWorkspaceBtn");
+const saveScriptBtn = $("#saveScriptBtn");
+const downloadAnnotationBtn = $("#downloadAnnotationBtn");
+const settingsForm = $("#settingsForm");
+const clearSettingsBtn = $("#clearSettingsBtn");
+const settingsStatus = $("#settingsStatus");
+const llmBaseUrlInput = $("#llmBaseUrl");
+const llmModelInput = $("#llmModel");
+const llmApiKeyInput = $("#llmApiKey");
+const llmTimeoutInput = $("#llmTimeout");
+
 const SETTINGS_KEY = "edaToolsNavigator.llmSettings";
-
-const physicalVerificationQuestions = [
-  "什么是 Calibre PERC？典型 flow 是什么？",
-  "DFM Property 的语法、参数和示例用法是什么？",
-  "SVRF 中 PROPERTY 和 NIPROPERTY 有什么区别？",
-  "Calibre PERC 如何设置 rule checks 和 results output？",
-  "Calibre RVE 中如何查看 PERC 结果？",
-  "LVS 和 PERC 在验证流程中的关系是什么？",
-  "DFM Property 支持哪些 property access function？",
-  "Calibre PERC LDL current density check 的用途是什么？",
-  "如何在 Calibre Interactive 中设置 PERC flow？",
-  "PERC report 中 summary 和 detailed results 应该怎么看？"
-];
-
-function randomPhysicalVerificationQuestion() {
-  return physicalVerificationQuestions[Math.floor(Math.random() * physicalVerificationQuestions.length)];
-}
-
-questionInput.placeholder = randomPhysicalVerificationQuestion();
-
-function escapeHtml(value) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function sourceLabel(source, index) {
-  const page = source.page ? `, p.${source.page}` : "";
-  return `[${index}] ${source.tool} / ${source.title}${page}`;
-}
-
-function renderTextWithCitations(container, text, sources) {
-  const pattern = /\[(\d+)\]/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-    }
-
-    const sourceIndex = Number(match[1]);
-    const source = sources[sourceIndex - 1];
-    if (!source) {
-      container.appendChild(document.createTextNode(match[0]));
-      lastIndex = pattern.lastIndex;
-      continue;
-    }
-
-    const citation = document.createElement("a");
-    citation.className = "citation";
-    citation.href = source.source_url || `/source?chunk_id=${source.chunk_id}`;
-    citation.target = "_blank";
-    citation.rel = "noopener noreferrer";
-    citation.textContent = `[${sourceIndex}]`;
-    citation.setAttribute("aria-label", `${sourceLabel(source, sourceIndex)}，打开原文`);
-
-    const tooltip = document.createElement("span");
-    tooltip.className = "citation-tooltip";
-    const label = document.createElement("strong");
-    label.textContent = sourceLabel(source, sourceIndex);
-    const excerpt = document.createElement("span");
-    excerpt.textContent = source.excerpt || "";
-    const action = document.createElement("em");
-    action.className = "citation-action";
-    action.textContent = source.source_path && source.source_path.toLowerCase().endsWith(".pdf") ? "点击打开并定位 PDF" : "点击打开并定位原文";
-    tooltip.appendChild(label);
-    tooltip.appendChild(excerpt);
-    tooltip.appendChild(action);
-    citation.appendChild(tooltip);
-    container.appendChild(citation);
-
-    lastIndex = pattern.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    container.appendChild(document.createTextNode(text.slice(lastIndex)));
-  }
-}
-
+const SCRIPT_STORE_KEY = "edaToolsNavigator.lastScript";
+let currentUser = null;
+let activeSourcePath = "";
+let latestAnnotationMarkdown = "";
+let directoryHandle = null;
 
 async function readJsonResponse(res) {
   let data = {};
@@ -112,40 +49,25 @@ async function readJsonResponse(res) {
   } catch (error) {
     data = { error: `响应不是有效 JSON：${error.message}` };
   }
-
-  if (!res.ok) {
-    const message = data.error || `HTTP ${res.status} ${res.statusText}`;
-    throw new Error(message);
-  }
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status} ${res.statusText}`);
   return data;
 }
 
 function networkErrorMessage(error) {
   if (error instanceof TypeError && /fetch/i.test(error.message)) {
-    return "无法连接后端服务。请确认 server.py 正在运行，并且当前网页地址和服务端口一致。";
+    return "无法连接后端服务。请确认 server.py 正在运行。";
   }
   return error.message;
 }
 
-function setSettingsStatus(message, isError = false) {
-  if (!settingsStatus) return;
-  settingsStatus.textContent = message;
-  settingsStatus.classList.toggle("error", isError);
-}
-
 function defaultLlmSettings() {
-  return {
-    llm_base_url: "",
-    llm_model: "internal-llm",
-    llm_api_key: "",
-    llm_timeout: 120,
-  };
+  return { llm_base_url: "", llm_model: "internal-llm", llm_api_key: "", llm_timeout: 120 };
 }
 
 function getLlmSettings() {
   try {
     return { ...defaultLlmSettings(), ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
-  } catch (error) {
+  } catch {
     return defaultLlmSettings();
   }
 }
@@ -162,176 +84,76 @@ function personalLlmEnabled() {
 function applySettings(data = getLlmSettings()) {
   llmBaseUrlInput.value = data.llm_base_url || "";
   llmModelInput.value = data.llm_model || "internal-llm";
-  llmTimeoutInput.value = data.llm_timeout || 120;
   llmApiKeyInput.value = data.llm_api_key || "";
-  apiKeyHint.textContent = personalLlmEnabled()
-    ? "当前浏览器已配置个人 LLM，后续问答会使用这组设置。"
-    : "未配置完整 LLM 信息时，会使用本地检索回答。";
+  llmTimeoutInput.value = data.llm_timeout || 120;
 }
 
-function loadSettings() {
-  applySettings(getLlmSettings());
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
-function openSettingsModal() {
-  loadSettings();
-  setSettingsStatus("");
-  settingsModal.classList.remove("hidden");
-  llmBaseUrlInput.focus();
+function sourceLabel(source, index) {
+  const page = source.page ? `, p.${source.page}` : "";
+  const type = source.material_type ? `${source.material_type} / ` : "";
+  return `[${index}] ${type}${source.tool} / ${source.title}${page}`;
 }
 
-function closeSettingsModal() {
-  settingsModal.classList.add("hidden");
+function openMaterial(url, sourcePath = "") {
+  if (!url) return;
+  activeSourcePath = sourcePath || activeSourcePath;
+  materialFrame.src = url;
 }
 
-function updateDebugVisibility(debug) {
-  document.querySelectorAll(".debug-only").forEach((element) => {
-    element.classList.toggle("hidden", !debug);
-  });
-}
-
-function updateTitleBadges(data) {
-  titleMeta.innerHTML = "";
-  const versionBadge = document.createElement("span");
-  versionBadge.className = "status-pill";
-  versionBadge.textContent = data.version ? `版本 ${data.version}` : "版本 unknown";
-  const llmBadge = document.createElement("span");
-  const enabled = personalLlmEnabled();
-  llmBadge.className = `status-pill ${enabled ? "ok" : "off"}`;
-  llmBadge.textContent = enabled ? "个人 LLM 已配置" : "本地检索模式";
-  titleMeta.appendChild(versionBadge);
-  titleMeta.appendChild(llmBadge);
-}
-
-function renderManualChart(toolStats = []) {
-  manualChart.innerHTML = "";
-  if (!toolStats.length) {
-    const empty = document.createElement("p");
-    empty.className = "summary-note";
-    empty.textContent = "暂无 manual 数据";
-    manualChart.appendChild(empty);
-    return;
+function renderTextWithCitations(container, text, sources) {
+  const pattern = /\[(\d+)\]/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+    const index = Number(match[1]);
+    const source = sources[index - 1];
+    if (!source) {
+      container.appendChild(document.createTextNode(match[0]));
+      lastIndex = pattern.lastIndex;
+      continue;
+    }
+    const link = document.createElement("a");
+    link.className = "citation";
+    link.href = source.source_url || `/source?chunk_id=${source.chunk_id}`;
+    link.textContent = `[${index}]`;
+    link.title = sourceLabel(source, index);
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      openMaterial(link.href, source.source_path);
+    });
+    container.appendChild(link);
+    lastIndex = pattern.lastIndex;
   }
-  const maxDocs = Math.max(...toolStats.map((item) => item.documents), 1);
-  toolStats.slice(0, 8).forEach((item) => {
-    const row = document.createElement("div");
-    row.className = "manual-row";
-    const label = document.createElement("span");
-    label.textContent = item.tool;
-    const bar = document.createElement("div");
-    bar.className = "manual-bar";
-    const fill = document.createElement("i");
-    fill.style.width = `${Math.max(8, Math.round((item.documents / maxDocs) * 100))}%`;
-    bar.appendChild(fill);
-    const count = document.createElement("b");
-    count.textContent = `${item.documents} docs / ${item.chunks} chunks`;
-    row.appendChild(label);
-    row.appendChild(bar);
-    row.appendChild(count);
-    manualChart.appendChild(row);
-  });
-}
-
-function normalizeTableLine(line) {
-  return line.replaceAll("｜", "|").trim();
-}
-
-function isTableSeparator(line) {
-  const cells = normalizeTableLine(line).replace(/^\|/, "").replace(/\|$/, "").split("|");
-  return cells.length >= 2 && cells.every((cell) => /^\s*:?-{3,}:?\s*$/.test(cell));
-}
-
-function isPipeTableLine(line) {
-  const normalized = normalizeTableLine(line);
-  if (!normalized.includes("|")) return false;
-  const cells = normalized.replace(/^\|/, "").replace(/\|$/, "").split("|");
-  return cells.length >= 2 && cells.some((cell) => cell.trim().length > 0);
-}
-
-function isTableHeader(lines, index) {
-  if (!isPipeTableLine(lines[index] || "")) return false;
-  if (index + 1 >= lines.length) return false;
-  return isTableSeparator(lines[index + 1]) || isPipeTableLine(lines[index + 1]);
-}
-
-function splitTableRow(line) {
-  return normalizeTableLine(line)
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((cell) => cell.trim());
+  if (lastIndex < text.length) container.appendChild(document.createTextNode(text.slice(lastIndex)));
 }
 
 function appendInline(container, text, sources) {
   renderTextWithCitations(container, text, sources);
 }
 
-function appendParagraph(container, lines, sources) {
-  const p = document.createElement("p");
-  appendInline(p, lines.join(" "), sources);
-  container.appendChild(p);
-}
-
-function appendList(container, lines, sources, ordered) {
-  const list = document.createElement(ordered ? "ol" : "ul");
-  lines.forEach((line) => {
-    const li = document.createElement("li");
-    const text = line.replace(/^\s*(?:[-*]|\d+\.)\s+/, "");
-    appendInline(li, text, sources);
-    list.appendChild(li);
-  });
-  container.appendChild(list);
-}
-
-function appendTable(container, lines, sources) {
-  const wrap = document.createElement("div");
-  wrap.className = "table-wrap";
-  const table = document.createElement("table");
-  const hasSeparator = lines.length > 1 && isTableSeparator(lines[1]);
-  const headerCells = splitTableRow(lines[0]);
-  const thead = document.createElement("thead");
-  const headerRow = document.createElement("tr");
-  headerCells.forEach((cell) => {
-    const th = document.createElement("th");
-    appendInline(th, cell, sources);
-    headerRow.appendChild(th);
-  });
-  thead.appendChild(headerRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
-  lines.slice(hasSeparator ? 2 : 1).forEach((line) => {
-    const row = document.createElement("tr");
-    splitTableRow(line).forEach((cell) => {
-      const td = document.createElement("td");
-      appendInline(td, cell, sources);
-      row.appendChild(td);
-    });
-    tbody.appendChild(row);
-  });
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-  container.appendChild(wrap);
-}
-
 function renderMarkdown(container, text, sources = []) {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  container.innerHTML = "";
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
   let i = 0;
-
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim()) {
       i += 1;
       continue;
     }
-
     if (line.trim().startsWith("```")) {
       const codeLines = [];
       i += 1;
-      while (i < lines.length && !lines[i].trim().startsWith("```")) {
-        codeLines.push(lines[i]);
-        i += 1;
-      }
+      while (i < lines.length && !lines[i].trim().startsWith("```")) codeLines.push(lines[i++]);
       if (i < lines.length) i += 1;
       const pre = document.createElement("pre");
       const code = document.createElement("code");
@@ -340,66 +162,55 @@ function renderMarkdown(container, text, sources = []) {
       container.appendChild(pre);
       continue;
     }
-
     const heading = line.match(/^(#{1,4})\s+(.+)$/);
     if (heading) {
-      const level = Math.min(4, heading[1].length + 1);
-      const h = document.createElement(`h${level}`);
+      const h = document.createElement(`h${Math.min(4, heading[1].length + 1)}`);
       appendInline(h, heading[2], sources);
       container.appendChild(h);
       i += 1;
       continue;
     }
-
-    if (isTableHeader(lines, i)) {
-      const tableLines = [lines[i]];
-      i += 1;
-      if (i < lines.length && isTableSeparator(lines[i])) {
-        tableLines.push(lines[i]);
+    if (/^\s*[-*]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) {
+      const ordered = /^\s*\d+\.\s+/.test(line);
+      const list = document.createElement(ordered ? "ol" : "ul");
+      const itemPattern = ordered ? /^\s*\d+\.\s+/ : /^\s*[-*]\s+/;
+      while (i < lines.length && itemPattern.test(lines[i])) {
+        const li = document.createElement("li");
+        appendInline(li, lines[i].replace(itemPattern, ""), sources);
+        list.appendChild(li);
         i += 1;
       }
-      while (i < lines.length && isPipeTableLine(lines[i]) && lines[i].trim()) {
-        tableLines.push(lines[i]);
-        i += 1;
-      }
-      appendTable(container, tableLines, sources);
+      container.appendChild(list);
       continue;
     }
-
-    if (/^\s*[-*]\s+/.test(line)) {
-      const listLines = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        listLines.push(lines[i]);
-        i += 1;
-      }
-      appendList(container, listLines, sources, false);
+    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1])) {
+      const tableLines = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) tableLines.push(lines[i++]);
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      const table = document.createElement("table");
+      tableLines.forEach((rowLine, rowIndex) => {
+        if (rowIndex === 1) return;
+        const tr = document.createElement("tr");
+        rowLine.replace(/^\|/, "").replace(/\|$/, "").split("|").forEach((cell) => {
+          const el = document.createElement(rowIndex === 0 ? "th" : "td");
+          appendInline(el, cell.trim(), sources);
+          tr.appendChild(el);
+        });
+        table.appendChild(tr);
+      });
+      wrap.appendChild(table);
+      container.appendChild(wrap);
       continue;
     }
-
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const listLines = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-        listLines.push(lines[i]);
-        i += 1;
-      }
-      appendList(container, listLines, sources, true);
-      continue;
+    const paragraph = [];
+    while (i < lines.length && lines[i].trim() && !lines[i].trim().startsWith("```") && !/^(#{1,4})\s+/.test(lines[i])) {
+      if (/^\s*[-*]\s+/.test(lines[i]) || /^\s*\d+\.\s+/.test(lines[i])) break;
+      paragraph.push(lines[i++]);
     }
-
-    const paragraphLines = [];
-    while (
-      i < lines.length &&
-      lines[i].trim() &&
-      !lines[i].trim().startsWith("```") &&
-      !/^(#{1,4})\s+/.test(lines[i]) &&
-      !isTableHeader(lines, i) &&
-      !/^\s*[-*]\s+/.test(lines[i]) &&
-      !/^\s*\d+\.\s+/.test(lines[i])
-    ) {
-      paragraphLines.push(lines[i]);
-      i += 1;
-    }
-    appendParagraph(container, paragraphLines, sources);
+    const p = document.createElement("p");
+    appendInline(p, paragraph.join(" "), sources);
+    container.appendChild(p);
   }
 }
 
@@ -408,123 +219,149 @@ function addMessage(role, text, sources = []) {
   article.className = `message ${role}`;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-
-  if (role === "assistant") {
-    renderMarkdown(bubble, text, sources);
-  } else {
-    bubble.textContent = text;
-  }
-
+  if (role === "assistant") renderMarkdown(bubble, text, sources);
+  else bubble.textContent = text;
   article.appendChild(bubble);
   messages.appendChild(article);
   messages.scrollTop = messages.scrollHeight;
   return article;
 }
 
-async function refreshStatus() {
-  const res = await fetch("/api/status");
-  const data = await readJsonResponse(res);
-  if (statusEl) {
-    const mode = personalLlmEnabled() ? "个人 LLM 已配置" : "本地检索模式";
-    statusEl.textContent = `${data.documents} 份文档，${data.chunks} 个索引片段，${mode}`;
-  }
-  updateTitleBadges(data);
-  updateDebugVisibility(Boolean(data.debug));
-  docCountEl.textContent = data.documents;
-  chunkCountEl.textContent = data.chunks;
-  toolList.innerHTML = "";
-  if (!data.tools.length) {
-    const li = document.createElement("li");
-    li.textContent = "暂无数据";
-    toolList.appendChild(li);
-  } else {
-    data.tools.forEach((tool) => {
-      const li = document.createElement("li");
-      li.textContent = tool;
-      toolList.appendChild(li);
-    });
-  }
-  renderManualChart(data.tool_stats || []);
+function showPane(name) {
+  ["chat", "script", "settings"].forEach((pane) => {
+    $(`#${pane}Pane`).classList.toggle("hidden", pane !== name);
+    $(`#${pane}Tab`).classList.toggle("active", pane === name);
+  });
 }
+
+function renderBadges(status) {
+  titleMeta.innerHTML = "";
+  [
+    `版本 ${status.version || "unknown"}`,
+    `${status.documents || 0} docs`,
+    `${status.chunks || 0} chunks`,
+    personalLlmEnabled() ? "个人 LLM 已配置" : "本地检索模式",
+  ].forEach((text) => {
+    const badge = document.createElement("span");
+    badge.className = "status-pill";
+    badge.textContent = text;
+    titleMeta.appendChild(badge);
+  });
+}
+
+function renderMaterials(data) {
+  materialsList.innerHTML = "";
+  if (!data.groups || !data.groups.length) {
+    materialsList.innerHTML = '<p class="empty">暂无 raw 材料。管理员需要把资料放到 raw/manuals 或 raw/books 后重建索引。</p>';
+    return;
+  }
+  data.groups.forEach((group) => {
+    const section = document.createElement("section");
+    section.className = "material-group";
+    const heading = document.createElement("h2");
+    heading.textContent = `${group.material_type} / ${group.group}`;
+    section.appendChild(heading);
+    group.documents.forEach((doc) => {
+      const button = document.createElement("button");
+      button.className = "material-link";
+      button.type = "button";
+      button.textContent = doc.title;
+      button.title = doc.source_path;
+      button.addEventListener("click", () => openMaterial(doc.view_url, doc.source_path));
+      section.appendChild(button);
+    });
+    materialsList.appendChild(section);
+  });
+  if (data.default_view_url && !materialFrame.src) openMaterial(data.default_view_url, data.default_source_path);
+}
+
+async function refreshAppData() {
+  const [status, materials] = await Promise.all([
+    fetch("/api/status").then(readJsonResponse),
+    fetch("/api/materials").then(readJsonResponse),
+  ]);
+  renderBadges(status);
+  renderMaterials(materials);
+}
+
+async function showApp(user) {
+  currentUser = user;
+  loginView.classList.add("hidden");
+  appView.classList.remove("hidden");
+  sessionMeta.textContent = `${user.username} (${user.role})`;
+  adminPanel.classList.toggle("hidden", user.role !== "admin");
+  addMessage("assistant", "已进入工作台。你可以在左侧选择 raw material，在右侧询问 manual/wiki 或注解脚本。");
+  await refreshAppData();
+}
+
+async function checkSession() {
+  const data = await fetch("/api/me").then(readJsonResponse);
+  if (data.user) {
+    await showApp(data.user);
+  } else {
+    appView.classList.add("hidden");
+    loginView.classList.remove("hidden");
+    if (data.bootstrap_required) {
+      loginStatus.textContent = "尚未创建管理员。请先在服务器执行：python3 server.py --create-admin admin";
+    }
+  }
+}
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginStatus.textContent = "";
+  try {
+    const data = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("#loginUsername").value, password: $("#loginPassword").value }),
+    }).then(readJsonResponse);
+    await showApp(data.user);
+  } catch (error) {
+    loginStatus.textContent = networkErrorMessage(error);
+  }
+});
+
+logoutBtn.addEventListener("click", async () => {
+  await fetch("/api/logout", { method: "POST" });
+  location.reload();
+});
 
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const question = questionInput.value.trim() || questionInput.placeholder.trim();
+  const question = questionInput.value.trim();
   if (!question) return;
   addMessage("user", question);
   questionInput.value = "";
-  questionInput.placeholder = randomPhysicalVerificationQuestion();
-  const pending = addMessage("assistant", "正在检索手册...");
-  await new Promise((resolve) => requestAnimationFrame(resolve));
-
+  const pending = addMessage("assistant", "正在检索 wiki 和 raw materials...");
   try {
-    const res = await fetch("/api/chat", {
+    const data = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, llm_config: getLlmSettings() }),
-    });
-    const data = await readJsonResponse(res);
+      body: JSON.stringify({ question, active_source_path: activeSourcePath, llm_config: getLlmSettings() }),
+    }).then(readJsonResponse);
     pending.remove();
-    addMessage("assistant", data.answer || data.error || "没有返回结果。", data.sources || []);
-    refreshStatus();
+    addMessage("assistant", data.answer || "没有返回结果。", data.sources || []);
+    refreshAppData();
   } catch (error) {
     pending.remove();
     addMessage("assistant", `请求失败：${networkErrorMessage(error)}`);
   }
 });
 
-settingsForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const settings = {
-    llm_base_url: llmBaseUrlInput.value.trim().replace(/\/$/, ""),
-    llm_model: llmModelInput.value.trim() || "internal-llm",
-    llm_api_key: llmApiKeyInput.value.trim(),
-    llm_timeout: Number(llmTimeoutInput.value || 120),
-  };
-  saveLlmSettings(settings);
-  applySettings(settings);
-  setSettingsStatus("已保存到当前浏览器。后续问答会使用这组 LLM 设置。");
-  refreshStatus();
-});
-
-settingsBtn.addEventListener("click", openSettingsModal);
-closeSettingsBtn.addEventListener("click", closeSettingsModal);
-settingsModal.addEventListener("click", (event) => {
-  if (event.target && event.target.hasAttribute("data-close-settings")) closeSettingsModal();
-});
-clearSettingsBtn.addEventListener("click", () => {
-  localStorage.removeItem(SETTINGS_KEY);
-  loadSettings();
-  setSettingsStatus("已清空当前浏览器的 LLM 设置。后续问答会使用本地检索模式。");
-  refreshStatus();
-});
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !settingsModal.classList.contains("hidden")) closeSettingsModal();
-});
-
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const formData = new FormData(uploadForm);
   const button = uploadForm.querySelector("button");
   button.disabled = true;
-  button.textContent = "正在上传...";
+  button.textContent = "上传中...";
   try {
-    const res = await fetch("/api/upload", {
-      method: "POST",
-      body: formData,
-    });
-    const data = await readJsonResponse(res);
-    if (data.error) throw new Error(data.error);
-    const indexed = data.indexed || {};
-    const files = indexed.files ?? 0;
-    const chunks = indexed.chunks ?? 0;
-    lastImportSummary.textContent = `本次导入：保存 ${data.saved} 个文件，更新 ${files} 份文档，生成 ${chunks} 个索引片段。`;
-    addMessage("assistant", `已保存 ${data.saved} 个文件，并更新 ${files} 份文档、${chunks} 个索引片段。`);
+    const data = await fetch("/api/upload", { method: "POST", body: new FormData(uploadForm) }).then(readJsonResponse);
+    adminStatus.textContent = `已保存 ${data.saved} 个文件。`;
     uploadForm.reset();
-    document.querySelector("#tool").value = "General";
-    refreshStatus();
+    $("#group").value = "General";
+    await refreshAppData();
   } catch (error) {
-    addMessage("assistant", `上传失败：${networkErrorMessage(error)}`);
+    adminStatus.textContent = networkErrorMessage(error);
   } finally {
     button.disabled = false;
     button.textContent = "上传并索引";
@@ -535,34 +372,150 @@ reindexBtn.addEventListener("click", async () => {
   reindexBtn.disabled = true;
   reindexBtn.textContent = "重建中...";
   try {
-    const res = await fetch("/api/reindex", { method: "POST" });
-    const data = await readJsonResponse(res);
-    lastImportSummary.textContent = `本次重建：${data.files} 份文档，${data.chunks} 个索引片段。`;
-    addMessage("assistant", `索引已重建：${data.files} 份文件，${data.chunks} 个片段。`);
-    refreshStatus();
+    const data = await fetch("/api/reindex", { method: "POST" }).then(readJsonResponse);
+    adminStatus.textContent = `索引完成：${data.files} files, ${data.chunks} chunks, ${data.wiki_pages || 0} wiki pages。`;
+    await refreshAppData();
   } catch (error) {
-    addMessage("assistant", `重建失败：${networkErrorMessage(error)}`);
+    adminStatus.textContent = networkErrorMessage(error);
   } finally {
     reindexBtn.disabled = false;
-    reindexBtn.textContent = "重建索引";
+    reindexBtn.textContent = "重建索引 / 生成 Wiki";
   }
 });
 
-function submitOnEnter(event) {
-  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+createUserForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  event.stopPropagation();
-  if (typeof chatForm.requestSubmit === "function") {
-    chatForm.requestSubmit();
-  } else {
-    chatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  try {
+    const data = await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("#newUsername").value, password: $("#newPassword").value, role: "user" }),
+    }).then(readJsonResponse);
+    adminStatus.textContent = `已创建用户 ${data.user.username}`;
+    createUserForm.reset();
+  } catch (error) {
+    adminStatus.textContent = networkErrorMessage(error);
   }
-}
+});
 
-questionInput.addEventListener("keydown", submitOnEnter, true);
-document.addEventListener("keydown", (event) => {
-  if (event.target === questionInput) submitOnEnter(event);
-}, true);
+settingsForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveLlmSettings({
+    llm_base_url: llmBaseUrlInput.value.trim().replace(/\/$/, ""),
+    llm_model: llmModelInput.value.trim() || "internal-llm",
+    llm_api_key: llmApiKeyInput.value.trim(),
+    llm_timeout: Number(llmTimeoutInput.value || 120),
+  });
+  settingsStatus.textContent = "已保存到当前浏览器。";
+  refreshAppData();
+});
 
-refreshStatus();
-loadSettings();
+clearSettingsBtn.addEventListener("click", () => {
+  localStorage.removeItem(SETTINGS_KEY);
+  applySettings();
+  settingsStatus.textContent = "已清空当前浏览器 LLM 设置。";
+  refreshAppData();
+});
+
+scriptFile.addEventListener("change", async () => {
+  const file = scriptFile.files && scriptFile.files[0];
+  if (!file) return;
+  scriptText.value = await file.text();
+});
+
+chooseWorkspaceBtn.addEventListener("click", async () => {
+  if ("showDirectoryPicker" in window) {
+    directoryHandle = await window.showDirectoryPicker();
+    annotationResult.textContent = `已选择本地目录：${directoryHandle.name}`;
+  } else {
+    annotationResult.textContent = "当前浏览器不支持真实目录授权，将使用浏览器本地存储。";
+  }
+});
+
+saveScriptBtn.addEventListener("click", async () => {
+  const content = scriptText.value;
+  if (!content.trim()) return;
+  if (directoryHandle) {
+    const handle = await directoryHandle.getFileHandle(`script-${Date.now()}.txt`, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(content);
+    await writable.close();
+    annotationResult.textContent = "脚本已保存到本地目录。";
+  } else {
+    localStorage.setItem(SCRIPT_STORE_KEY, content);
+    annotationResult.textContent = "脚本已保存到浏览器本地存储。";
+  }
+});
+
+annotateBtn.addEventListener("click", async () => {
+  annotateBtn.disabled = true;
+  annotateBtn.textContent = "注解中...";
+  annotationResult.textContent = "";
+  try {
+    const data = await fetch("/api/annotate-script", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        script_text: scriptText.value,
+        filename: scriptFile.files && scriptFile.files[0] ? scriptFile.files[0].name : "pasted-script.txt",
+        llm_config: getLlmSettings(),
+      }),
+    }).then(readJsonResponse);
+    latestAnnotationMarkdown = data.annotation_markdown || "";
+    renderMarkdown(annotationResult, latestAnnotationMarkdown, data.sources || []);
+    downloadAnnotationBtn.disabled = !latestAnnotationMarkdown;
+  } catch (error) {
+    annotationResult.textContent = networkErrorMessage(error);
+  } finally {
+    annotateBtn.disabled = false;
+    annotateBtn.textContent = "生成结构化注解";
+  }
+});
+
+downloadAnnotationBtn.addEventListener("click", () => {
+  if (!latestAnnotationMarkdown) return;
+  const blob = new Blob([latestAnnotationMarkdown], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "script-annotation.md";
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+["chat", "script", "settings"].forEach((name) => {
+  $(`#${name}Tab`).addEventListener("click", () => showPane(name));
+});
+
+togglePanelBtn.addEventListener("click", () => {
+  appView.classList.toggle("wide-work-panel");
+});
+
+let dragging = false;
+splitter.addEventListener("mousedown", () => {
+  dragging = true;
+  document.body.classList.add("dragging");
+});
+document.addEventListener("mouseup", () => {
+  dragging = false;
+  document.body.classList.remove("dragging");
+});
+document.addEventListener("mousemove", (event) => {
+  if (!dragging) return;
+  const width = Math.min(Math.max(window.innerWidth - event.clientX - 18, 360), Math.min(760, window.innerWidth * 0.62));
+  document.documentElement.style.setProperty("--work-width", `${width}px`);
+});
+
+questionInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    chatForm.requestSubmit();
+  }
+});
+
+applySettings();
+scriptText.value = localStorage.getItem(SCRIPT_STORE_KEY) || "";
+checkSession().catch((error) => {
+  loginView.classList.remove("hidden");
+  loginStatus.textContent = networkErrorMessage(error);
+});

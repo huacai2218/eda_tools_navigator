@@ -22,7 +22,7 @@ Options:
   --skip-deps            Skip pip install. Use when dependencies are already installed.
   -h, --help             Show help.
 
-The upgrade preserves manuals/, data/, .env, .venv, backups/, and dist/.
+The upgrade preserves raw/, data/, .env, .venv, backups/, and dist/.
 EOF
 }
 
@@ -116,6 +116,7 @@ BACKUP_FILE="$APP_DIR/backups/pre-upgrade-$(date +%Y%m%d-%H%M%S).tar.gz"
 echo "Creating code backup: $BACKUP_FILE"
 tar -czf "$BACKUP_FILE" -C "$APP_DIR" \
   --exclude="./manuals" \
+  --exclude="./raw" \
   --exclude="./data" \
   --exclude="./.env" \
   --exclude="./.venv" \
@@ -189,5 +190,5 @@ else
 fi
 
 echo "Upgrade complete."
-echo "Preserved: manuals/, data/, .env"
+echo "Preserved: raw/, data/, .env"
 echo "Backup: $BACKUP_FILE"
