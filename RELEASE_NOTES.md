@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.1.19 - 2026-05-20
+
+- Navigator 默认改为 PDF manual 浏览，优先打开 `calbr_ver_user.pdf`，并保留 `svrf_ur`、`calbr_perc_user`、`calbr_pmatch_user`、`xact_user`、`calbr_opcv_useref` 快捷切换。
+- Manual 搜索候选改为从 `raw/` 全局扫描支持文档，同名文档优先选择 PDF，不再罗列全部材料列表。
+- PDF reader 顶部新增当前文档查找框，可基于已索引文本跳转到匹配页。
+- 右侧工作区栏目命名调整为 `LLM-WIKI`、`Scripts Comment`、`Settings`，chat 输入提示改为 raw materials 语义。
+- 启动服务和后台 reindex 前会显示 SQLite runtime 版本与 FTS5 支持状态；页面状态栏同步显示 `SQLite FTS5: ON/OFF`。
+
 ## 0.1.18 - 2026-05-20
 
 - 网页端移除上传、重建索引和用户创建等维护入口；后台仍保留对应 admin API，正式 reindex 通过 `python3 server.py --reindex` 执行。
