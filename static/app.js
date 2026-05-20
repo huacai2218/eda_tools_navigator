@@ -247,8 +247,13 @@ function showPane(name) {
 
 function renderBadges(status) {
   titleMeta.innerHTML = "";
+  const sqliteVersion = status.sqlite_version || "unknown";
+  const sqliteFts = status.sqlite_fts5_supported
+    ? `SQLite FTS5: ON (${sqliteVersion})`
+    : `SQLite FTS5: OFF (${sqliteVersion})`;
   [
     `版本 ${status.version || "unknown"}`,
+    sqliteFts,
     personalLlmEnabled() ? "个人 LLM 已配置" : "本地检索模式",
   ].forEach((text) => {
     const badge = document.createElement("span");

@@ -504,6 +504,26 @@ def search_backend_name() -> str:
     return "fts5" if sqlite_supports_fts5() else "sqlite-like"
 
 
+def sqlite_runtime_message() -> str:
+    sqlite_version = sqlite3.sqlite_version
+    module_version = getattr(sqlite3, "version", None)
+    module_suffix = f" (python sqlite3 {module_version})" if module_version else ""
+    if os.environ.get("EDA_FORCE_SQLITE_LEGACY") == "1":
+        return (
+            f"SQLite runtime {sqlite_version}{module_suffix} "
+            "has FTS5 disabled by EDA_FORCE_SQLITE_LEGACY=1; search backend: sqlite-like fallback."
+        )
+    if sqlite_supports_fts5():
+        return (
+            f"SQLite runtime {sqlite_version}{module_suffix} "
+            "supports FTS5; search backend: fts5."
+        )
+    return (
+        f"SQLite runtime {sqlite_version}{module_suffix} "
+        "does not support FTS5; search backend: sqlite-like fallback."
+    )
+
+
 def should_rebuild_database(exc: sqlite3.DatabaseError) -> bool:
     message = str(exc).lower()
     return "malformed database schema" in message or "no such module: fts" in message or ("chunks_fts" in message and "no such module" in message)
@@ -2464,6 +2484,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "version": app_version(),
                     "debug": DEBUG_MODE,
                     "search_backend": search_backend_name(),
+                    "sqlite_version": sqlite3.sqlite_version,
+                    "sqlite_fts5_supported": sqlite_supports_fts5(),
+                    "sqlite_message": sqlite_runtime_message(),
                 }
             )
             return
@@ -2623,6 +2646,7 @@ def run(host: str, port: int, debug: bool = False) -> None:
     global DEBUG_MODE
     DEBUG_MODE = debug
     ensure_dirs()
+    print(sqlite_runtime_message(), file=sys.stderr)
     maybe_incremental_index(force=True)
     if user_count() == 0:
         print("No users configured. Create an admin first: python3 server.py --create-admin admin", file=sys.stderr)
@@ -2653,6 +2677,7 @@ def main() -> None:
         return
 
     if args.reindex:
+        print(sqlite_runtime_message(), file=sys.stderr)
         result = reindex_all()
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
