@@ -12,6 +12,9 @@ const quickManuals = $("#quickManuals");
 const manualSearchForm = $("#manualSearchForm");
 const manualSearch = $("#manualSearch");
 const manualOptions = $("#manualOptions");
+const readerSearchForm = $("#readerSearchForm");
+const readerSearch = $("#readerSearch");
+const readerSearchStatus = $("#readerSearchStatus");
 const materialFrame = $("#materialFrame");
 const workPanel = $("#workPanel");
 const splitter = $("#splitter");
@@ -38,9 +41,10 @@ const SETTINGS_KEY = "edaToolsNavigator.llmSettings";
 const SCRIPT_STORE_KEY = "edaToolsNavigator.lastScript";
 let currentUser = null;
 let activeSourcePath = "";
+let activeMaterialKind = "";
 let latestAnnotationMarkdown = "";
 let directoryHandle = null;
-let htmlManuals = [];
+let manualCandidates = [];
 
 async function readJsonResponse(res) {
   let data = {};
@@ -105,6 +109,13 @@ function sourceLabel(source, index) {
 function openMaterial(url, sourcePath = "") {
   if (!url) return;
   activeSourcePath = sourcePath || activeSourcePath;
+  const path = sourcePath || "";
+  activeMaterialKind = path.toLowerCase().endsWith(".pdf") ? "pdf" : "";
+  if (readerSearchStatus) {
+    readerSearchStatus.textContent = activeMaterialKind === "pdf"
+      ? "也可使用浏览器 PDF 工具栏内置查找做页内精确定位。"
+      : "当前不是 PDF，查找会基于已索引文本跳转到相关位置。";
+  }
   materialFrame.src = url;
 }
 
@@ -258,7 +269,7 @@ function manualButton(item, className = "material-link") {
 }
 
 function renderManualSearch(manuals = []) {
-  htmlManuals = manuals;
+  manualCandidates = manuals;
   manualOptions.innerHTML = "";
   manuals.forEach((item) => {
     const option = document.createElement("option");
@@ -271,8 +282,8 @@ function renderManualSearch(manuals = []) {
 function openManualFromSearch() {
   const query = manualSearch.value.trim().toLowerCase();
   if (!query) return;
-  const item = htmlManuals.find((manual) => manual.manual_id.toLowerCase() === query)
-    || htmlManuals.find((manual) => manual.manual_id.toLowerCase().includes(query) || manual.title.toLowerCase().includes(query));
+  const item = manualCandidates.find((manual) => manual.manual_id.toLowerCase() === query)
+    || manualCandidates.find((manual) => manual.manual_id.toLowerCase().includes(query) || manual.title.toLowerCase().includes(query));
   if (item) {
     manualSearch.value = item.manual_id;
     openMaterial(item.view_url, item.source_path);
@@ -282,31 +293,16 @@ function openManualFromSearch() {
 function renderMaterials(data) {
   materialsList.innerHTML = "";
   quickManuals.innerHTML = "";
-  renderManualSearch(data.html_manuals || []);
+  renderManualSearch(data.manuals || data.html_manuals || []);
 
   (data.quick_manuals || []).forEach((item) => {
     quickManuals.appendChild(manualButton(item, "quick-manual"));
   });
 
-  if (!data.html_manuals || !data.html_manuals.length) {
-    materialsList.innerHTML = '<p class="empty">暂无 HTML manual 页面。管理员需要把网页手册放到 raw/manuals/**/htmldocs/*/index.html 后在后台运行 reindex。</p>';
+  if (!(data.manuals || []).length) {
+    materialsList.innerHTML = '<p class="empty">暂无 raw manual 候选。管理员需要把材料放到 raw/ 后在后台运行 reindex。</p>';
     return;
   }
-  const grouped = new Map();
-  data.html_manuals.forEach((item) => {
-    const group = grouped.get(item.group) || [];
-    group.push(item);
-    grouped.set(item.group, group);
-  });
-  grouped.forEach((manuals, groupName) => {
-    const section = document.createElement("section");
-    section.className = "material-group";
-    const heading = document.createElement("h2");
-    heading.textContent = groupName;
-    section.appendChild(heading);
-    manuals.forEach((item) => section.appendChild(manualButton(item)));
-    materialsList.appendChild(section);
-  });
   if (data.default_view_url && !materialFrame.src) openMaterial(data.default_view_url, data.default_source_path);
 }
 
@@ -393,6 +389,21 @@ manualSearch.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     openManualFromSearch();
+  }
+});
+
+readerSearchForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = readerSearch.value.trim();
+  if (!query || !activeSourcePath) return;
+  readerSearchStatus.textContent = "正在查找当前 manual 索引文本...";
+  try {
+    const params = new URLSearchParams({ source_path: activeSourcePath, q: query });
+    const data = await fetch(`/api/manual-search?${params.toString()}`).then(readJsonResponse);
+    openMaterial(data.view_url, data.source_path);
+    readerSearchStatus.textContent = `已跳到匹配页 ${data.page || "1"}。可继续用浏览器 PDF 内置查找做页内精确定位。`;
+  } catch (error) {
+    readerSearchStatus.textContent = `未找到：${networkErrorMessage(error)}`;
   }
 });
 

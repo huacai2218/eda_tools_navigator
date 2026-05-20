@@ -51,6 +51,14 @@
       </aside>
 
       <section class="reader-panel" aria-label="Material viewer">
+        <form id="readerSearchForm" class="reader-search" autocomplete="off">
+          <label>
+            PDF 查找
+            <input id="readerSearch" placeholder="在当前 PDF 索引文本中查找并跳页" />
+          </label>
+          <button type="submit" class="secondary-button">查找</button>
+          <span id="readerSearchStatus">也可使用浏览器 PDF 工具栏内置查找做页内精确定位。</span>
+        </form>
         <iframe id="materialFrame" title="Material viewer"></iframe>
       </section>
 
@@ -59,9 +67,9 @@
       <aside id="workPanel" class="work-panel" aria-label="Chat and script tools">
         <header class="work-header">
           <div class="tabs" role="tablist">
-            <button id="chatTab" class="tab active" type="button">问 Manual</button>
-            <button id="scriptTab" class="tab" type="button">脚本注解</button>
-            <button id="settingsTab" class="tab" type="button">我的设置</button>
+            <button id="chatTab" class="tab active" type="button">LLM-WIKI</button>
+            <button id="scriptTab" class="tab" type="button">Scripts Comment</button>
+            <button id="settingsTab" class="tab" type="button">Settings</button>
           </div>
           <button id="togglePanelBtn" class="icon-button" type="button" aria-label="展开或收起右侧区域">⇔</button>
         </header>
@@ -69,7 +77,7 @@
         <section id="chatPane" class="pane">
           <div id="messages" class="messages"></div>
           <form id="chatForm" class="composer" novalidate>
-            <textarea id="question" rows="3" placeholder="例如：set_clock_uncertainty 的语法、options 和用例是什么？"></textarea>
+            <textarea id="question" rows="3" placeholder="例如：根据 raw materials 解释 Calibre PERC rule 的 options 和用例"></textarea>
             <button type="submit">发送</button>
           </form>
         </section>

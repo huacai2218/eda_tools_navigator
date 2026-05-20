@@ -1545,34 +1545,56 @@ def material_view_url(source_path: str) -> str:
     return f"/source?path={quote(source_path)}"
 
 
-def html_manual_id(path: Path) -> str:
-    return path.parent.name
+def manual_candidate_id(path: Path) -> str:
+    if path.name.lower() == "index.html":
+        return path.parent.name
+    return path.stem
 
 
-def html_manual_title(manual_id: str) -> str:
+def manual_candidate_title(manual_id: str) -> str:
     return manual_id.replace("_", " ")
 
 
-def html_manual_items() -> list[dict[str, Any]]:
-    root = RAW_DIR / "manuals"
-    if not root.exists():
+def manual_candidate_priority(path: Path) -> tuple[int, str]:
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return (0, str(path))
+    if path.name.lower() == "index.html":
+        return (1, str(path))
+    if suffix in {".html", ".htm"}:
+        return (2, str(path))
+    return (3, str(path))
+
+
+def manual_candidate_items() -> list[dict[str, Any]]:
+    if not RAW_DIR.exists():
         return []
+
+    selected: dict[str, Path] = {}
+    for path in supported_files(include_wiki=False):
+        if RAW_DIR not in path.parents:
+            continue
+        manual_id = manual_candidate_id(path)
+        current = selected.get(manual_id)
+        if current is None or manual_candidate_priority(path) < manual_candidate_priority(current):
+            selected[manual_id] = path
+
     items: list[dict[str, Any]] = []
-    for path in sorted(root.glob("*/htmldocs/*/index.html")):
-        manual_id = html_manual_id(path)
+    for manual_id, path in sorted(selected.items(), key=lambda item: item[0]):
         source_path = relative_source(path)
         try:
             rel = path.relative_to(RAW_DIR)
-            group = rel.parts[1] if len(rel.parts) > 1 else "General"
+            group = rel.parts[1] if len(rel.parts) > 1 and rel.parts[0] in {"manuals", "books"} else (rel.parts[0] if rel.parts else "General")
         except ValueError:
             group = "General"
         items.append(
             {
                 "manual_id": manual_id,
-                "title": html_manual_title(manual_id),
+                "title": manual_candidate_title(manual_id),
                 "group": group,
                 "source_path": source_path,
-                "view_url": manual_url(source_path),
+                "kind": material_kind(source_path),
+                "view_url": material_view_url(source_path),
             }
         )
     return items
@@ -1613,9 +1635,9 @@ def materials_payload() -> dict[str, Any]:
             }
         )
 
-    html_manuals = html_manual_items()
-    manual_by_id = {item["manual_id"]: item for item in html_manuals}
-    default_manual = manual_by_id.get(DEFAULT_MANUAL_ID) or (html_manuals[0] if html_manuals else None)
+    manuals = manual_candidate_items()
+    manual_by_id = {item["manual_id"]: item for item in manuals}
+    default_manual = manual_by_id.get(DEFAULT_MANUAL_ID) or (manuals[0] if manuals else None)
     quick_manuals = [manual_by_id[manual_id] for manual_id in QUICK_MANUAL_IDS if manual_id in manual_by_id]
 
     if default_manual:
@@ -1628,9 +1650,73 @@ def materials_payload() -> dict[str, Any]:
         "default_source_path": default_source_path,
         "default_view_url": default_view_url,
         "default_manual_id": default_manual["manual_id"] if default_manual else "",
-        "html_manuals": html_manuals,
+        "manuals": manuals,
+        "html_manuals": manuals,
         "quick_manuals": quick_manuals,
         "groups": list(tools.values()),
+    }
+
+
+def manual_search_payload(source_path: str, query: str) -> dict[str, Any]:
+    decoded_source = unquote(source_path).strip()
+    terms = query_terms(query)
+    if not decoded_source or not terms:
+        raise ValueError("source_path and q are required")
+
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.id AS chunk_id, c.page, c.text, c.chunk_index, d.source_path
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE d.source_path = ?
+            ORDER BY c.chunk_index
+            """,
+            (decoded_source,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        raise KeyError("source document is not indexed")
+
+    best = None
+    best_score = -1
+    for row in rows:
+        lower = row["text"].lower()
+        score = sum(lower.count(term) for term in terms)
+        if score > best_score:
+            best = row
+            best_score = score
+
+    if not best or best_score <= 0:
+        raise KeyError("query not found in current manual")
+
+    page = best["page"] or "1"
+    if Path(decoded_source).suffix.lower() == ".pdf":
+        view_url = f"/pdf-viewer?path={quote(decoded_source)}&page={quote(str(page))}"
+    else:
+        view_url = source_url_for_hit(
+            SearchHit(
+                chunk_id=int(best["chunk_id"]),
+                chunk_index=int(best["chunk_index"]),
+                material_type="manual",
+                tool="Manual",
+                title=Path(decoded_source).stem,
+                source_path=decoded_source,
+                page=best["page"],
+                text=best["text"],
+                score=0.0,
+            )
+        )
+
+    return {
+        "source_path": decoded_source,
+        "page": page,
+        "chunk_id": int(best["chunk_id"]),
+        "excerpt": best["text"][:650],
+        "view_url": view_url,
     }
 
 
@@ -2297,6 +2383,18 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
             hits = search(query, limit=12, material_types={"wiki"})
             self.send_json({"results": source_payload(hits)})
+            return
+
+        if parsed.path == "/api/manual-search":
+            try:
+                params = parse_qs(parsed.query)
+                self.send_json(manual_search_payload(params.get("source_path", [""])[0], params.get("q", [""])[0]))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except KeyError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except Exception as exc:
+                self.send_json({"error": f"manual search failed: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
         if parsed.path.startswith("/raw/"):
