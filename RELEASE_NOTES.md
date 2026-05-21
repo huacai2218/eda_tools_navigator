@@ -1,5 +1,9 @@
 # Release Notes
 
+## Unreleased
+
+- 改进当前 PDF 搜索排序：多词查询优先完整短语命中，目录优先仅用于相关目录命中，并让摘要聚焦匹配位置。
+
 ## 0.1.20 - 2026-05-21
 
 - Navigator 调整为 PDF-first 工作台：左侧提供当前 PDF 检索、PDF manual 下拉、快捷入口和底部账号菜单。

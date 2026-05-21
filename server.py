@@ -1812,22 +1812,42 @@ def manual_search_payload(source_path: str, query: str, page: int = 1, page_size
             return 1
         return 0
 
-    def display_excerpt(text: str) -> str:
+    normalized_query = re.sub(r"\s+", " ", query.strip().lower())
+    phrase_query = normalized_query if len(terms) > 1 else ""
+
+    def normalized_text(value: str) -> str:
+        return re.sub(r"\s+", " ", value.lower())
+
+    def display_excerpt(text: str, phrase: str, search_terms: list[str]) -> str:
         cleaned = re.sub(r"\.{4,}", " ... ", text)
         cleaned = re.sub(r"[_\-]{4,}", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        lower_cleaned = cleaned.lower()
+        match_at = -1
+        if phrase:
+            match_at = lower_cleaned.find(phrase)
+        if match_at < 0:
+            positions = [lower_cleaned.find(term) for term in search_terms if lower_cleaned.find(term) >= 0]
+            match_at = min(positions) if positions else -1
+        if match_at > 80:
+            start = max(0, match_at - 100)
+            cleaned = "... " + cleaned[start:].lstrip()
         if len(cleaned) > 260:
             cleaned = cleaned[:260].rsplit(" ", 1)[0].rstrip(" .,;:") + " ..."
         return cleaned
 
     matches: list[dict[str, Any]] = []
     for row in rows:
-        lower = row["text"].lower()
+        lower = normalized_text(row["text"])
+        phrase_match = bool(phrase_query and phrase_query in lower)
+        term_hits = sum(1 for term in terms if term in lower)
+        all_terms_match = term_hits == len(terms)
         score = sum(lower.count(term) for term in terms)
         if score <= 0:
             continue
         matched_page = row["page"] or "1"
-        directory_score = toc_score(row["text"])
+        raw_directory_score = toc_score(row["text"])
+        directory_score = raw_directory_score if (phrase_match or all_terms_match) else 0
         view_url = pdf_native_view_url(decoded_source, str(matched_page))
         matches.append(
             {
@@ -1836,9 +1856,12 @@ def manual_search_payload(source_path: str, query: str, page: int = 1, page_size
                 "chunk_id": int(row["chunk_id"]),
                 "chunk_index": int(row["chunk_index"]),
                 "score": score,
+                "term_hits": term_hits,
+                "all_terms_match": all_terms_match,
+                "phrase_match": phrase_match,
                 "toc_score": directory_score,
-                "is_toc": directory_score > 0,
-                "excerpt": display_excerpt(row["text"]),
+                "is_toc": raw_directory_score > 0 and (phrase_match or all_terms_match),
+                "excerpt": display_excerpt(row["text"], phrase_query, terms),
                 "view_url": view_url,
             }
         )
@@ -1846,9 +1869,17 @@ def manual_search_payload(source_path: str, query: str, page: int = 1, page_size
     if not matches:
         raise KeyError("query not found in current manual")
 
+    if phrase_query and any(item["phrase_match"] for item in matches):
+        matches = [item for item in matches if item["phrase_match"]]
+    elif len(terms) > 1 and any(item["all_terms_match"] for item in matches):
+        matches = [item for item in matches if item["all_terms_match"]]
+
     matches.sort(
         key=lambda item: (
+            not bool(item["phrase_match"]),
+            not bool(item["all_terms_match"]),
             -int(item["toc_score"]),
+            -int(item["term_hits"]),
             -int(item["score"]),
             int(str(item["page"]).split("-", 1)[0]) if str(item["page"]).isdigit() else 10**9,
             item["chunk_index"],
