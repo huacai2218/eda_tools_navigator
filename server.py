@@ -41,6 +41,7 @@ USAGE_LLM_CONTEXT_LIMIT = 28
 USAGE_LLM_CHUNK_CHAR_LIMIT = 1800
 SCRIPT_CONTEXT_LIMIT = 18
 SCRIPT_CHUNK_CHAR_LIMIT = 1100
+SCRIPT_INPUT_CHAR_LIMIT = 36000
 TRANSLATE_CONTEXT_LIMIT = 18
 TRANSLATE_PAGE_LIMIT = 20
 TRANSLATE_TEXT_CHAR_LIMIT = 30000
@@ -2290,18 +2291,41 @@ def script_context(hits: list[SearchHit]) -> str:
     return "\n\n".join(blocks)
 
 
+def numbered_script_text(script_text: str, limit: int = SCRIPT_INPUT_CHAR_LIMIT) -> str:
+    truncated = len(script_text) > limit
+    text = script_text[:limit]
+    if truncated:
+        text = text.rsplit("\n", 1)[0]
+    lines = text.splitlines()
+    numbered = "\n".join(f"{index:04d}: {line}" for index, line in enumerate(lines, start=1))
+    if truncated:
+        numbered += "\n\n[脚本过长，后续内容未发送给 LLM，请缩短输入后分段解释。]"
+    return numbered
+
+
 def call_script_annotation_llm(script_text: str, filename: str, hits: list[SearchHit], config: AppConfig) -> str:
     url = f"{config.llm_base_url}/chat/completions"
     system_prompt = (
-        "You are an EDA Rule Comment and user guide assistant. Answer in Chinese. "
-        "Create a structured Markdown document that explains the provided rule/script using only the provided wiki/manual/book excerpts. "
-        "Explain rules, commands, options, inputs, outputs, use cases, execution flow, and risks. "
-        "Add practical user-guide guidance for how a user should read, run, modify, and verify the rule/script. "
-        "Do not rewrite the full script; quote only small examples when needed. "
-        "If a command, option, behavior, or recommendation is not covered by the excerpts, mark it as 未在资料中确认 instead of guessing. "
-        "Use this structure: Rule/Script 概览, 执行流程, 关键规则/命令说明, 参数和 option 说明, 输入输出文件, User Guide, 潜在风险和注意事项, Manual/Wiki 来源. "
-        "Cite sources inline with bracket numbers like [1], [2]."
+        "You are an EDA CodeInterp assistant. Answer in Chinese. "
+        "Create a structured Markdown document that explains the provided rule/script using the provided wiki/manual/book excerpts. "
+        "The user needs both an overall explanation and a readable annotated version of the original script. "
+        "Start with a concise whole-script overview and user guide, then continue with a line-by-line or block-by-block interpretation based on the numbered original script. "
+        "Do not stop at a high-level overview. The detailed annotated script is mandatory. "
+        "In section 4, preserve the original script text completely, in original order, with line numbers. Every provided original line must appear exactly once inside Markdown code fences. "
+        "In section 4, put the explanation BEFORE the original line or original block, so the user reads the interpretation first and then sees the exact script text. "
+        "Do not use a table for section 4; tables make long script lines hard to read. Use headings, short explanation bullets, then a fenced code block containing the exact original line or block. "
+        "For every non-comment command/rule line, explain the command/rule meaning, important arguments, options, variables, paths, input/output behavior, and why that line is present. "
+        "For original comment lines, do not add any extra explanation or expand their meaning. Preserve those comment lines only as part of the following original code block. "
+        "For blank separators, braces, parentheses, continuation lines, or nested blocks, explain their role only at the block/module level, not as separate verbose line commentary. "
+        "When a command spans multiple lines or has braces/parentheses, introduce a module section such as 'Lines 12-28: block purpose', explain the block before the code, then include the full original block unchanged. "
+        "Preserve technical tokens exactly using `inline code`: commands, rules, options, variables, file names, paths, layer names, and identifiers. "
+        "If a command, option, behavior, or recommendation is confirmed by the excerpts, cite sources inline with bracket numbers like [1], [2]. "
+        "If it is not covered by the excerpts, mark that point as 未在资料中确认 instead of guessing. "
+        "Use this structure exactly: 1. 整体概览, 2. 执行流程, 3. User Guide, 4. 逐行/逐模块解释, 5. 参数和 option 汇总, 6. 输入输出文件, 7. 潜在风险和注意事项, 8. Manual/Wiki 来源. "
+        "In section 4, use this repeated pattern: '### Lines X-Y: module name', then '**解释**:' with concise bullets, then '**原文**:' followed by a ```text fenced block with the exact numbered lines. "
+        "Do not omit lines from the provided numbered script, do not rewrite original lines, and do not move original lines out of order."
     )
+    numbered_script = numbered_script_text(script_text)
     payload = {
         "model": config.llm_model,
         "messages": [
@@ -2310,7 +2334,7 @@ def call_script_annotation_llm(script_text: str, filename: str, hits: list[Searc
                 "role": "user",
                 "content": (
                     f"Filename: {filename or 'pasted-script'}\n\n"
-                    f"Script:\n```text\n{script_text[:24000]}\n```\n\n"
+                    f"Numbered script:\n```text\n{numbered_script}\n```\n\n"
                     f"Reference excerpts:\n{script_context(hits)}"
                 ),
             },
