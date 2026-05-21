@@ -1,8 +1,17 @@
 # Release Notes
 
+## 0.1.20 - 2026-05-21
+
+- Navigator 调整为 PDF-first 工作台：左侧提供当前 PDF 检索、PDF manual 下拉、快捷入口和底部账号菜单。
+- 右侧工作区更新为 `KnowQuery`、`DocTrans`、`CodeInterp`；`Settings` 移入账号菜单弹窗。
+- `DocTrans` 新增当前 PDF 页范围翻译，结合已索引 wiki/manual/book 知识上下文，并优化 Markdown 输出格式。
+- `CodeInterp` 改为解释 rule/script 并生成 user guide，不再提供浏览器本地保存脚本入口。
+- 增加普通用户命令行创建、登录后自助修改密码、PDF 索引成功提示、当前 PDF 搜索分页和目录优先排序。
+- raw 索引忽略 HTML/HTM 网页文件；补丁脚本改为离线安全流程，不创建环境、不安装依赖，并优先使用 Python 3.9。
+
 ## 0.1.19 - 2026-05-20
 
-- Navigator 默认改为 PDF manual 浏览，优先打开 `calbr_ver_user.pdf`，并保留 `svrf_ur`、`calbr_perc_user`、`calbr_pmatch_user`、`xact_user`、`calbr_opcv_useref` 快捷切换。
+- Navigator 默认改为 PDF manual 浏览，支持管理员配置默认文档和快捷切换。
 - Manual 搜索候选改为从 `raw/` 全局扫描支持文档，同名文档优先选择 PDF，不再罗列全部材料列表。
 - PDF reader 顶部新增当前文档查找框，可基于已索引文本跳转到匹配页。
 - 右侧工作区栏目命名调整为 `LLM-WIKI`、`Scripts Comment`、`Settings`，chat 输入提示改为 raw materials 语义。
@@ -10,10 +19,10 @@
 
 ## 0.1.18 - 2026-05-20
 
-- 网页端移除上传、重建索引和用户创建等维护入口；后台仍保留对应 admin API，正式 reindex 通过 `python3 server.py --reindex` 执行。
+- 网页端移除上传、重建索引和用户创建等维护入口；后台仍保留对应 admin API，正式 reindex 通过后台命令执行。
 - 左侧栏改回 `Navigator`，不再显示 docs/chunks 统计信息。
-- Manual viewer 默认优先打开 `calbr_ver_user/index.html`，并提供 `svrf_ur`、`calbr_perc_user`、`calbr_pmatch_user`、`xact_user`、`calbr_opcv_useref` 快捷切换。
-- 新增 HTML manual 页面搜索自动补齐，来源限定为 `raw/manuals/**/htmldocs/*/index.html`。
+- Manual viewer 支持默认文档和快捷切换入口。
+- 新增 HTML manual 页面搜索自动补齐。
 - 新增轻量 patch 包生成和应用脚本，便于已安装目录快速更新程序文件。
 
 ## 0.1.17 - 2026-05-20

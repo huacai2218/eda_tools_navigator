@@ -34,13 +34,13 @@ eda_tools_navigator/
 网页端不提供上传材料、用户创建或重建索引入口；这些维护动作通过服务器后台命令或保留的 admin API 完成。首次部署后先创建管理员：
 
 ```bash
-python3 server.py --create-admin admin
+python3.9 server.py --create-admin admin
 ```
 
 随后启动服务：
 
 ```bash
-python3 server.py --host 0.0.0.0 --port 8765
+python3.9 server.py --host 0.0.0.0 --port 8765
 ```
 
 ## 工作方式
@@ -66,7 +66,7 @@ cd /path/to/eda_tools_navigator
 安装 Python 依赖：
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3.9 -m pip install -r requirements.txt
 ```
 
 如需启用内部 LLM，复制并编辑 `.env`：
@@ -87,8 +87,8 @@ LLM_TIMEOUT=120
 启动：
 
 ```bash
-python3 server.py --create-admin admin
-python3 server.py
+python3.9 server.py --create-admin admin
+python3.9 server.py
 ```
 
 浏览器访问：
@@ -100,7 +100,7 @@ http://127.0.0.1:8765
 如果默认端口被占用：
 
 ```bash
-python3 server.py --port 8766
+python3.9 server.py --port 8766
 ```
 
 ### 个人本地后台运行
@@ -110,7 +110,7 @@ python3 server.py --port 8766
 ```bash
 cd /path/to/eda_tools_navigator
 mkdir -p logs
-nohup python3 server.py --host 127.0.0.1 --port 8765 > logs/server.log 2>&1 &
+nohup python3.9 server.py --host 127.0.0.1 --port 8765 > logs/server.log 2>&1 &
 echo $! > logs/server.pid
 ```
 
@@ -154,13 +154,13 @@ Ubuntu / Debian:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3 python3-pip python3-venv poppler-utils
+sudo apt-get install -y python3.9 python3.9-venv python3-pip poppler-utils
 ```
 
 Rocky Linux / CentOS:
 
 ```bash
-sudo dnf install -y python3 python3-pip poppler-utils
+sudo dnf install -y python3.9 python3-pip poppler-utils
 ```
 
 `poppler-utils` 提供 `pdftotext`。PDF 解析顺序是先使用 Python 依赖 `pypdf`；如果 `pypdf` 不支持该 PDF、解析报错，或解析结果基本为空，则自动 fallback 到 `pdftotext`。
@@ -184,7 +184,7 @@ sudo chown -R $USER:$USER /opt/eda-tools-reader
 
 ```bash
 cd /opt/eda-tools-reader
-python3 -m venv .venv
+python3.9 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -220,18 +220,19 @@ LLM_TIMEOUT=120
 示例：
 
 ```text
-/opt/eda-tools-reader/raw/manuals/Calibre/
-/opt/eda-tools-reader/raw/manuals/Innovus/
-/opt/eda-tools-reader/raw/manuals/PrimeTime/
-/opt/eda-tools-reader/raw/books/Timing/
+/opt/eda-tools-reader/raw/manuals/ToolA/
+/opt/eda-tools-reader/raw/manuals/ToolB/
+/opt/eda-tools-reader/raw/manuals/ToolC/
+/opt/eda-tools-reader/raw/books/TopicA/
 ```
 
 当前支持：
 
 - `.txt`
 - `.md`
-- `.html`
 - `.pdf`
+
+raw 材料索引会忽略 `.html` / `.htm` 网页文件；如需检索网页内容，请先转换为 Markdown、文本或 PDF。
 
 ### 6. 构建索引
 
@@ -240,7 +241,7 @@ LLM_TIMEOUT=120
 ```bash
 cd /opt/eda-tools-reader
 source .venv/bin/activate
-python server.py --reindex
+python3.9 server.py --reindex
 ```
 
 后续新增材料后，可以再次执行上述命令。网页端不触发 reindex。
@@ -250,7 +251,7 @@ python server.py --reindex
 ```bash
 cd /opt/eda-tools-reader
 source .venv/bin/activate
-python server.py --host 0.0.0.0 --port 8765
+python3.9 server.py --host 0.0.0.0 --port 8765
 ```
 
 在服务器上检查：
@@ -362,7 +363,7 @@ sudo systemctl reload nginx
 升级流程有两种：
 
 - 完整 release 包：适合标准升级，使用 `scripts/upgrade.sh`。
-- 轻量 patch 包：适合已安装目录快速覆盖程序文件，使用 `scripts/apply_patch.sh`。
+- 轻量 patch 包：适合已安装目录快速覆盖程序文件，使用 `scripts/apply_patch.sh`；patch 过程不创建虚拟环境、不安装依赖，适合离线服务器。
 
 ### 1. 生成 release 包
 
@@ -448,10 +449,10 @@ cd /opt/eda-tools-reader
 ./scripts/apply_patch.sh /tmp/eda-tools-reader-patch-0.1.18-20260520-120000.tar.gz
 ```
 
-patch 脚本会备份当前程序文件到 `backups/pre-patch-<时间>.tar.gz`，覆盖程序文件，保留 `raw/`、`data/`、`.env`、`.venv/`，并执行 `server.py` 语法检查。需要重建 raw/wiki 索引时，打完 patch 后单独执行：
+patch 脚本会备份当前程序文件到 `backups/pre-patch-<时间>.tar.gz`，覆盖程序文件，保留 `raw/`、`data/`、`.env`、`.venv/`，并执行 `server.py` 语法检查。patch 过程不会检查或安装 `requirements.txt`，语法检查会优先使用已有 `.venv/bin/python`，没有虚拟环境时使用系统 `python3.9`。需要重建 raw/wiki 索引时，打完 patch 后单独执行：
 
 ```bash
-python3 server.py --reindex
+python3.9 server.py --reindex
 ```
 
 ### 4. 升级后检查
@@ -579,9 +580,9 @@ LLM_TIMEOUT      请求超时时间，默认 120 秒
 
 ## 引用与原文查看
 
-回答中的引用标注如 `[1]`、`[2]` 可以直接点击。HTML 手册会直接打开 `raw/` 下的原 HTML 文件，并注入轻量定位脚本滚动到被引用文本，同时加入 base 路径以保持原页面 CSS、图片和相对链接可用；PDF 手册会打开内置 PDF viewer 页面并把原 PDF 加载到指定页码；其他文本类手册会打开网页化原文视图并定位到被引用的索引片段。
+回答中的引用标注如 `[1]`、`[2]` 可以直接点击。PDF 手册会打开内置 PDF viewer 页面并把原 PDF 加载到指定页码；其他文本类手册会打开网页化原文视图并定位到被引用的索引片段。
 
-原文视图来自已经建立索引的手册内容，支持 `.txt`、`.md`、`.html` 和已成功抽取文本的 `.pdf`。如果 PDF 无法抽取文本，需要先确认服务器已安装 `pdftotext` 所属的 `poppler-utils`。
+原文视图来自已经建立索引的手册内容，支持 `.txt`、`.md` 和已成功抽取文本的 `.pdf`。raw 中的 HTML/HTM 网页文件不会进入索引。如果 PDF 无法抽取文本，需要先确认服务器已安装 `pdftotext` 所属的 `poppler-utils`。
 
 ## 新增或更新 raw 材料
 
@@ -589,22 +590,20 @@ LLM_TIMEOUT      请求超时时间，默认 120 秒
 
 ```text
 raw/manuals/
-  PrimeTime/
-    user_guide.pdf
-    command_reference.pdf
-  Innovus/
-    user_guide.pdf
-  Calibre/
-    svrf_reference.pdf
+  ToolA/
+    <manual-id>.pdf
+    <command-reference>.pdf
+  ToolB/
+    <user-guide>.pdf
 raw/books/
-  Timing/
-    sta_notes.md
+  TopicA/
+    <notes>.md
 ```
 
 更新索引：
 
 ```bash
-python3 server.py --reindex
+python3.9 server.py --reindex
 ```
 
 重建索引请在服务器后台执行；普通用户没有上传或 reindex API 权限。
@@ -652,5 +651,5 @@ data/index.sqlite-shm.incompatible-<时间>
 如需强制测试兼容模式，可以这样启动：
 
 ```bash
-EDA_FORCE_SQLITE_LEGACY=1 python3 server.py --host 0.0.0.0 --port 8765
+EDA_FORCE_SQLITE_LEGACY=1 python3.9 server.py --host 0.0.0.0 --port 8765
 ```

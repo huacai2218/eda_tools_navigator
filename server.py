@@ -37,26 +37,33 @@ SEARCH_CANDIDATE_LIMIT = 40
 ANSWER_CONTEXT_LIMIT = 24
 LLM_CONTEXT_LIMIT = 14
 LLM_CHUNK_CHAR_LIMIT = 850
+USAGE_LLM_CONTEXT_LIMIT = 28
+USAGE_LLM_CHUNK_CHAR_LIMIT = 1800
 SCRIPT_CONTEXT_LIMIT = 18
 SCRIPT_CHUNK_CHAR_LIMIT = 1100
+TRANSLATE_CONTEXT_LIMIT = 18
+TRANSLATE_PAGE_LIMIT = 20
+TRANSLATE_TEXT_CHAR_LIMIT = 30000
 DEBUG_MODE = False
 INDEX_CHECK_INTERVAL = 120
 LAST_INCREMENTAL_INDEX_AT = 0.0
 SQLITE_FTS5_SUPPORTED: bool | None = None
 SESSION_COOKIE = "eda_nav_session"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
-PROTECTED_API_PREFIXES = ("/api/materials", "/api/wiki/search", "/api/chat", "/api/annotate-script")
-ADMIN_API_PATHS = {"/api/upload", "/api/reindex", "/api/users", "/api/users/reset-password"}
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".html", ".htm", ".pdf"}
-RAW_MATERIAL_TYPES = {"manual": "manuals", "book": "books"}
-QUICK_MANUAL_IDS = (
-    "svrf_ur",
-    "calbr_perc_user",
-    "calbr_pmatch_user",
-    "xact_user",
-    "calbr_opcv_useref",
+MIN_PASSWORD_LENGTH = 2
+PROTECTED_API_PREFIXES = (
+    "/api/materials",
+    "/api/wiki/search",
+    "/api/chat",
+    "/api/annotate-script",
+    "/api/translate-pages",
+    "/api/change-password",
 )
-DEFAULT_MANUAL_ID = "calbr_ver_user"
+ADMIN_API_PATHS = {"/api/upload", "/api/reindex", "/api/users", "/api/users/reset-password"}
+RAW_SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf"}
+WIKI_SUPPORTED_EXTENSIONS = {".md", ".markdown"}
+SUPPORTED_EXTENSIONS = RAW_SUPPORTED_EXTENSIONS | WIKI_SUPPORTED_EXTENSIONS
+RAW_MATERIAL_TYPES = {"manual": "manuals", "book": "books"}
 
 
 QUERY_STOP_WORDS = {
@@ -178,6 +185,17 @@ CONFIG = load_config()
 
 
 SETTINGS_KEYS = ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_TIMEOUT")
+
+
+def configured_default_manual_id() -> str:
+    load_env_file(ROOT / ".env", override=True)
+    return os.getenv("EDA_DEFAULT_MANUAL_ID", "").strip()
+
+
+def configured_quick_manual_ids() -> list[str]:
+    load_env_file(ROOT / ".env", override=True)
+    raw_value = os.getenv("EDA_QUICK_MANUAL_IDS", "")
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
 def parse_env_values(path: Path) -> dict[str, str]:
@@ -352,8 +370,8 @@ def create_user(username: str, password: str, role: str = "user") -> dict[str, A
     username = normalize_tool_name(username).replace(" ", "_").lower()
     if not re.fullmatch(r"[a-z0-9_.-]{2,64}", username):
         raise ValueError("username must be 2-64 chars: letters, numbers, dot, underscore, or dash")
-    if len(password) < 8:
-        raise ValueError("password must be at least 8 characters")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
     if role not in {"admin", "user"}:
         raise ValueError("role must be admin or user")
 
@@ -370,8 +388,8 @@ def create_user(username: str, password: str, role: str = "user") -> dict[str, A
 
 
 def reset_user_password(username: str, password: str) -> None:
-    if len(password) < 8:
-        raise ValueError("password must be at least 8 characters")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
     conn = connect()
     try:
         cursor = conn.execute(
@@ -381,6 +399,26 @@ def reset_user_password(username: str, password: str) -> None:
         if cursor.rowcount == 0:
             raise KeyError("user not found")
         conn.execute("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)", (username,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def change_user_password(user_id: int, current_password: str, new_password: str, keep_token: str = "") -> None:
+    if len(new_password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"new password must be at least {MIN_PASSWORD_LENGTH} characters")
+    conn = connect()
+    try:
+        row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise KeyError("user not found")
+        if not verify_password(current_password, row["password_hash"]):
+            raise PermissionError("current password is incorrect")
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(new_password), user_id),
+        )
+        conn.execute("DELETE FROM sessions WHERE user_id = ? AND token != ?", (user_id, keep_token))
         conn.commit()
     finally:
         conn.close()
@@ -762,6 +800,8 @@ def read_document(path: Path) -> list[tuple[str, str]]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         return read_pdf(path)
+    if path.is_relative_to(RAW_DIR) and suffix in {".html", ".htm"}:
+        return []
 
     try:
         raw = path.read_text(encoding="utf-8")
@@ -791,13 +831,11 @@ def split_into_chunks(text: str) -> list[str]:
 
 
 def supported_files(include_wiki: bool = False) -> list[Path]:
-    roots = [RAW_DIR]
-    if include_wiki:
-        roots.append(WIKI_DIR)
     files: list[Path] = []
-    for root in roots:
-        if root.exists():
-            files.extend(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS)
+    if RAW_DIR.exists():
+        files.extend(p for p in RAW_DIR.rglob("*") if p.is_file() and p.suffix.lower() in RAW_SUPPORTED_EXTENSIONS)
+    if include_wiki and WIKI_DIR.exists():
+        files.extend(p for p in WIKI_DIR.rglob("*") if p.is_file() and p.suffix.lower() in WIKI_SUPPORTED_EXTENSIONS)
     return sorted(files)
 
 
@@ -846,6 +884,8 @@ def index_file(conn: sqlite3.Connection, path: Path) -> int:
     if existing and abs(existing["file_mtime"] - file_mtime) < 0.0001:
         return 0
 
+    pages = read_document(path)
+
     if existing:
         document_id = int(existing["id"])
         delete_search_entries(conn, document_id)
@@ -862,7 +902,7 @@ def index_file(conn: sqlite3.Connection, path: Path) -> int:
         document_id = int(cursor.lastrowid)
 
     inserted = 0
-    for page, text in read_document(path):
+    for page, text in pages:
         for chunk in split_into_chunks(text):
             cursor = conn.execute(
                 "INSERT INTO chunks(document_id, chunk_index, page, text) VALUES (?, ?, ?, ?)",
@@ -1015,8 +1055,25 @@ def reindex_all() -> dict[str, int]:
     conn.execute("DELETE FROM documents")
     indexed_files = 0
     indexed_chunks = 0
+    pdf_total = 0
+    pdf_indexed = 0
+    pdf_failed = 0
+    pdf_errors: list[str] = []
     for path in supported_files(include_wiki=False):
-        chunks = index_file(conn, path)
+        is_pdf = path.suffix.lower() == ".pdf"
+        if is_pdf:
+            pdf_total += 1
+        try:
+            chunks = index_file(conn, path)
+        except Exception as exc:
+            if is_pdf:
+                pdf_failed += 1
+                pdf_errors.append(f"{relative_source(path)}: {exc}")
+                print(f"Warning: PDF indexing failed for {relative_source(path)}: {exc}", file=sys.stderr)
+                continue
+            raise
+        if is_pdf:
+            pdf_indexed += 1
         indexed_files += 1
         indexed_chunks += chunks
     wiki_result = generate_wiki_files(conn)
@@ -1029,7 +1086,19 @@ def reindex_all() -> dict[str, int]:
     conn.close()
     global LAST_INCREMENTAL_INDEX_AT
     LAST_INCREMENTAL_INDEX_AT = time.time()
-    return {"files": indexed_files, "chunks": indexed_chunks, "wiki_pages": wiki_result["pages"]}
+    if pdf_failed:
+        print(f"Warning: PDF indexing completed with failures: {pdf_indexed}/{pdf_total} PDFs indexed, {pdf_failed} failed.", file=sys.stderr)
+    else:
+        print(f"PDF indexing completed successfully: {pdf_indexed}/{pdf_total} PDFs indexed.", file=sys.stderr)
+    return {
+        "files": indexed_files,
+        "chunks": indexed_chunks,
+        "wiki_pages": wiki_result["pages"],
+        "pdf_total": pdf_total,
+        "pdf_indexed": pdf_indexed,
+        "pdf_failed": pdf_failed,
+        "pdf_errors": pdf_errors,
+    }
 
 
 def incremental_index() -> dict[str, int]:
@@ -1326,8 +1395,6 @@ def hit_rank(query: str, hit: SearchHit, terms: list[str], concept_question: boo
 
         if "introduction introduction" in text_start:
             score += 24.0
-        if "calibre perc flow" in text_start:
-            score += 20.0
         if any(f"{term} is " in text_start or f"{term}™ is " in text_start for term in terms):
             score += 22.0
         if "platform" in text_start and any(term in text_start for term in terms):
@@ -1337,20 +1404,14 @@ def hit_rank(query: str, hit: SearchHit, terms: list[str], concept_question: boo
 
         if hit.title.strip().lower() == "index" or hit.source_path.lower().endswith("/index.html"):
             score -= 35.0
-        if "calbr_rn" in hit.source_path.lower() or "release" in title_path or "_rh" in hit.source_path.lower():
+        if "release" in title_path or "_rh" in hit.source_path.lower():
             score -= 35.0
-        if any(term.startswith("3d") for term in terms) and "3dstack_user" in hit.source_path.lower():
-            score += 18.0
-        if any(term.startswith("3d") for term in terms) and any(marker in text_start for marker in ("calibre 3dperc", "running calibre 3dperc", "configuring calibre 3dperc", "3dperc flow")):
-            score += 24.0
         if hit.text.count("................................................................") >= 2:
             score -= 50.0
         if "command reference" in haystack and not any(hint in text_start for hint in ("introduction", "overview", "flow")):
             score -= 24.0
         if hit.text.count("::") >= 6:
             score -= 30.0
-        if text_start.count("perc::") >= 3:
-            score -= 35.0
 
     if usage_question:
         for hint in USAGE_HINTS:
@@ -1559,10 +1620,14 @@ def material_view_url(source_path: str) -> str:
     suffix = Path(source_path).suffix.lower()
     if source_path.startswith("raw/"):
         if suffix == ".pdf":
-            return f"/pdf-viewer?path={quote(source_path)}&page=1"
+            return pdf_native_view_url(source_path, "1")
         if suffix in {".html", ".htm"}:
             return manual_url(source_path)
     return f"/source?path={quote(source_path)}"
+
+
+def pdf_native_view_url(source_path: str, page: str = "1") -> str:
+    return f"{manual_url(source_path)}#page={quote(str(page or '1'))}&zoom=page-width"
 
 
 def manual_candidate_id(path: Path) -> str:
@@ -1620,6 +1685,33 @@ def manual_candidate_items() -> list[dict[str, Any]]:
     return items
 
 
+def pdf_manual_items() -> list[dict[str, Any]]:
+    manuals_dir = RAW_DIR / "manuals"
+    if not manuals_dir.exists():
+        return []
+
+    items: list[dict[str, Any]] = []
+    for path in sorted(manuals_dir.rglob("*.pdf"), key=lambda item: str(item).lower()):
+        manual_id = manual_candidate_id(path)
+        source_path = relative_source(path)
+        try:
+            rel = path.relative_to(manuals_dir)
+            group = rel.parts[0] if len(rel.parts) > 1 else "Manuals"
+        except ValueError:
+            group = "Manuals"
+        items.append(
+            {
+                "manual_id": manual_id,
+                "title": manual_candidate_title(manual_id),
+                "group": group,
+                "source_path": source_path,
+                "kind": "pdf",
+                "view_url": material_view_url(source_path),
+            }
+        )
+    return items
+
+
 def materials_payload() -> dict[str, Any]:
     conn = connect()
     try:
@@ -1655,16 +1747,20 @@ def materials_payload() -> dict[str, Any]:
             }
         )
 
-    manuals = manual_candidate_items()
-    manual_by_id = {item["manual_id"]: item for item in manuals}
-    default_manual = manual_by_id.get(DEFAULT_MANUAL_ID) or (manuals[0] if manuals else None)
-    quick_manuals = [manual_by_id[manual_id] for manual_id in QUICK_MANUAL_IDS if manual_id in manual_by_id]
+    pdf_manuals = pdf_manual_items()
+    manuals = pdf_manuals
+    manual_by_id = {item["manual_id"]: item for item in pdf_manuals}
+    default_manual_id = configured_default_manual_id()
+    default_manual = manual_by_id.get(default_manual_id) if default_manual_id else None
+    default_manual = default_manual or (pdf_manuals[0] if pdf_manuals else None)
+    quick_manuals = [manual_by_id[manual_id] for manual_id in configured_quick_manual_ids() if manual_id in manual_by_id]
 
     if default_manual:
         default_source_path = default_manual["source_path"]
         default_view_url = default_manual["view_url"]
     else:
-        default_view_url = material_view_url(default_source_path) if default_source_path else ""
+        default_source_path = ""
+        default_view_url = ""
 
     return {
         "default_source_path": default_source_path,
@@ -1672,16 +1768,21 @@ def materials_payload() -> dict[str, Any]:
         "default_manual_id": default_manual["manual_id"] if default_manual else "",
         "manuals": manuals,
         "html_manuals": manuals,
+        "pdf_manuals": pdf_manuals,
         "quick_manuals": quick_manuals,
         "groups": list(tools.values()),
     }
 
 
-def manual_search_payload(source_path: str, query: str) -> dict[str, Any]:
+def manual_search_payload(source_path: str, query: str, page: int = 1, page_size: int = 6) -> dict[str, Any]:
     decoded_source = unquote(source_path).strip()
     terms = query_terms(query)
     if not decoded_source or not terms:
         raise ValueError("source_path and q are required")
+    if Path(decoded_source).suffix.lower() != ".pdf":
+        raise ValueError("current manual search only supports PDF files")
+    page = max(1, int(page or 1))
+    page_size = min(max(1, int(page_size or 6)), 20)
 
     conn = connect()
     try:
@@ -1701,42 +1802,79 @@ def manual_search_payload(source_path: str, query: str) -> dict[str, Any]:
     if not rows:
         raise KeyError("source document is not indexed")
 
-    best = None
-    best_score = -1
+    def toc_score(text: str) -> int:
+        normalized = re.sub(r"\s+", " ", text.lower())
+        if "table of contents" in normalized:
+            return 3
+        if "contents" in normalized and "preface" in normalized:
+            return 2
+        if re.search(r"\.{6,}\s*\d+", text):
+            return 1
+        return 0
+
+    def display_excerpt(text: str) -> str:
+        cleaned = re.sub(r"\.{4,}", " ... ", text)
+        cleaned = re.sub(r"[_\-]{4,}", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if len(cleaned) > 260:
+            cleaned = cleaned[:260].rsplit(" ", 1)[0].rstrip(" .,;:") + " ..."
+        return cleaned
+
+    matches: list[dict[str, Any]] = []
     for row in rows:
         lower = row["text"].lower()
         score = sum(lower.count(term) for term in terms)
-        if score > best_score:
-            best = row
-            best_score = score
+        if score <= 0:
+            continue
+        matched_page = row["page"] or "1"
+        directory_score = toc_score(row["text"])
+        view_url = pdf_native_view_url(decoded_source, str(matched_page))
+        matches.append(
+            {
+                "source_path": decoded_source,
+                "page": matched_page,
+                "chunk_id": int(row["chunk_id"]),
+                "chunk_index": int(row["chunk_index"]),
+                "score": score,
+                "toc_score": directory_score,
+                "is_toc": directory_score > 0,
+                "excerpt": display_excerpt(row["text"]),
+                "view_url": view_url,
+            }
+        )
 
-    if not best or best_score <= 0:
+    if not matches:
         raise KeyError("query not found in current manual")
 
-    page = best["page"] or "1"
-    if Path(decoded_source).suffix.lower() == ".pdf":
-        view_url = f"/pdf-viewer?path={quote(decoded_source)}&page={quote(str(page))}"
-    else:
-        view_url = source_url_for_hit(
-            SearchHit(
-                chunk_id=int(best["chunk_id"]),
-                chunk_index=int(best["chunk_index"]),
-                material_type="manual",
-                tool="Manual",
-                title=Path(decoded_source).stem,
-                source_path=decoded_source,
-                page=best["page"],
-                text=best["text"],
-                score=0.0,
-            )
+    matches.sort(
+        key=lambda item: (
+            -int(item["toc_score"]),
+            -int(item["score"]),
+            int(str(item["page"]).split("-", 1)[0]) if str(item["page"]).isdigit() else 10**9,
+            item["chunk_index"],
         )
+    )
+    total = len(matches)
+    start = (page - 1) * page_size
+    paged = matches[start : start + page_size]
+    if not paged:
+        page = max(1, (total + page_size - 1) // page_size)
+        start = (page - 1) * page_size
+        paged = matches[start : start + page_size]
+    first = paged[0]
 
     return {
         "source_path": decoded_source,
         "page": page,
-        "chunk_id": int(best["chunk_id"]),
-        "excerpt": best["text"][:650],
-        "view_url": view_url,
+        "matched_page": first["page"],
+        "chunk_id": first["chunk_id"],
+        "excerpt": first["excerpt"],
+        "view_url": first["view_url"],
+        "results": paged,
+        "total": total,
+        "page_size": page_size,
+        "has_prev": page > 1,
+        "has_next": start + page_size < total,
     }
 
 
@@ -1764,7 +1902,7 @@ def source_url_for_hit(hit: SearchHit) -> str:
         return f"{manual_url(hit.source_path)}{query}"
     if suffix == ".pdf":
         page = hit.page if hit.page else "1"
-        return f"/pdf-viewer?path={quote(hit.source_path)}&page={quote(str(page))}"
+        return pdf_native_view_url(hit.source_path, str(page))
     return f"/source?chunk_id={hit.chunk_id}#chunk-{hit.chunk_id}"
 
 
@@ -1813,13 +1951,13 @@ def fallback_answer(question: str, hits: list[SearchHit]) -> str:
     return f"找到相关 raw material 片段，但没有提取到明确句子。最相关内容如下：\n\n{preview}"
 
 
-def llm_context(hits: list[SearchHit]) -> str:
+def llm_context(hits: list[SearchHit], limit: int = LLM_CONTEXT_LIMIT, chunk_char_limit: int = LLM_CHUNK_CHAR_LIMIT) -> str:
     blocks = []
-    for index, hit in enumerate(hits[:LLM_CONTEXT_LIMIT], start=1):
+    for index, hit in enumerate(hits[:limit], start=1):
         page = f", page {hit.page}" if hit.page else ""
         text = hit.text
-        if len(text) > LLM_CHUNK_CHAR_LIMIT:
-            text = text[:LLM_CHUNK_CHAR_LIMIT].rsplit(" ", 1)[0] + " ..."
+        if len(text) > chunk_char_limit:
+            text = text[:chunk_char_limit].rsplit(" ", 1)[0] + " ..."
         blocks.append(
             f"[{index}] Tool: {hit.tool}\n"
             f"Material type: {hit.material_type}\n"
@@ -1832,15 +1970,19 @@ def llm_context(hits: list[SearchHit]) -> str:
 
 def call_llm(question: str, hits: list[SearchHit], config: AppConfig) -> str:
     url = f"{config.llm_base_url}/chat/completions"
+    usage_question = is_usage_question(question)
+    context_limit = USAGE_LLM_CONTEXT_LIMIT if usage_question else LLM_CONTEXT_LIMIT
+    chunk_limit = USAGE_LLM_CHUNK_CHAR_LIMIT if usage_question else LLM_CHUNK_CHAR_LIMIT
     system_prompt = (
         "You are an assistant for EDA tool manuals, books, and generated wiki pages. Answer in Chinese unless the user asks otherwise. "
         "Use only the provided wiki and raw material excerpts. Wiki pages are optimized guidance, but raw manual/book excerpts are the source of truth. "
         "Synthesize across excerpts instead of simply listing search hits. "
         "For concept questions, explain the definition, purpose, typical flow, important inputs/outputs, and practical usage when the excerpts support it. "
-        "For usage, option, syntax, or example questions, provide a detailed technical answer: include syntax or command form, explain each relevant option/argument, describe behavior and constraints, and include examples from the excerpts when available. "
-        "Use clean Markdown with a consistent structure. For detailed technical answers, use sections such as: 结论, 用法/语法, 参数/选项, 示例, 注意事项. "
+        "For rule/command usage, option, syntax, or example questions, provide an exhaustive technical answer from the excerpts: include the command/rule form, every option/argument that appears in the provided excerpts, each option's meaning, accepted values or constraints, interactions with other options, defaults when stated, and examples/use cases when available. "
+        "Do not summarize away or omit options, examples, modes, caveats, restrictions, or page-level details that appear in the excerpts. If the excerpts contain a long option list, keep the answer long and complete. "
+        "Use clean Markdown with a consistent structure. For detailed technical answers, use sections such as: 结论, 用法/语法, 参数/选项完整表, 示例/用例, 注意事项, 未在资料中确认. "
         "For options, arguments, modes, return values, and examples, use a valid Markdown pipe table with a separator row, for example: | 项目 | 作用 | 约束/注意点 | 示例/来源 | followed by | --- | --- | --- | --- |. Do not use space-aligned plain text tables. "
-        "Do not omit important options or caveats that appear in the excerpts. If several excerpts describe different modes, organize the answer by mode or use case. "
+        "If several excerpts describe different modes, organize the answer by mode or use case. "
         "If wiki and raw material conflict, follow the raw material and mention the conflict. If the excerpts do not contain enough information, say what is missing. "
         "Cite sources inline using the bracket numbers like [1], [2] after the specific claim they support, including inside table cells when appropriate."
     )
@@ -1852,7 +1994,7 @@ def call_llm(question: str, hits: list[SearchHit], config: AppConfig) -> str:
                 "role": "user",
                 "content": (
                     f"Question:\n{question}\n\n"
-                    f"Manual excerpts:\n{llm_context(hits)}"
+                    f"Manual excerpts:\n{llm_context(hits, context_limit, chunk_limit)}"
                 ),
             },
         ],
@@ -1909,8 +2051,179 @@ def answer_question(question: str, llm_config: Any = None) -> dict[str, Any]:
     else:
         answer = fallback_answer(question, hits)
 
-    visible_hits = hits[:LLM_CONTEXT_LIMIT] if config.llm_enabled else hits
+    visible_limit = USAGE_LLM_CONTEXT_LIMIT if config.llm_enabled and is_usage_question(question) else LLM_CONTEXT_LIMIT
+    visible_hits = hits[:visible_limit] if config.llm_enabled else hits
     return {"answer": answer, "sources": source_payload(visible_hits), "mode": answer_mode}
+
+
+def page_number(value: str) -> int | None:
+    match = re.search(r"\d+", str(value or ""))
+    return int(match.group(0)) if match else None
+
+
+def pdf_page_hits(source_path: str, page_start: int, page_end: int) -> list[SearchHit]:
+    decoded_source = unquote(source_path).strip()
+    path = manual_file_path(decoded_source)
+    if path.suffix.lower() != ".pdf":
+        raise ValueError("DocTrans only supports current PDF files")
+    if page_start < 1 or page_end < page_start:
+        raise ValueError("page range is invalid")
+    if page_end - page_start + 1 > TRANSLATE_PAGE_LIMIT:
+        raise ValueError(f"translate at most {TRANSLATE_PAGE_LIMIT} pages at a time")
+
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                c.id AS chunk_id,
+                c.chunk_index,
+                d.material_type,
+                d.tool,
+                d.title,
+                d.source_path,
+                c.page,
+                c.text,
+                0.0 AS score
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE d.source_path = ?
+            ORDER BY c.chunk_index
+            """,
+            (decoded_source,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    hits = []
+    for hit in rows_to_hits(rows):
+        number = page_number(hit.page)
+        if number is not None and page_start <= number <= page_end:
+            hits.append(hit)
+    if not hits:
+        raise KeyError("selected PDF pages are not indexed")
+    return hits
+
+
+def translation_context_hits(page_hits: list[SearchHit]) -> list[SearchHit]:
+    source_query = " ".join(
+        [
+            page_hits[0].tool if page_hits else "",
+            page_hits[0].title if page_hits else "",
+            " ".join(hit.text[:1600] for hit in page_hits),
+        ]
+    )
+    terms = query_terms(source_query)
+    if not terms:
+        return []
+    query = " ".join(terms[:24])
+    expanded_query = " ".join(terms[:18] + ["wiki", "manual", "usage", "option", "example", "terminology"])
+    same_page_ids = {hit.chunk_id for hit in page_hits}
+    candidates: dict[int, SearchHit] = {}
+
+    for hit in search(query, limit=TRANSLATE_CONTEXT_LIMIT * 2, material_types={"wiki", "manual", "book"}):
+        if hit.chunk_id not in same_page_ids:
+            candidates.setdefault(hit.chunk_id, hit)
+
+    for hit in search(expanded_query, limit=TRANSLATE_CONTEXT_LIMIT * 2, material_types={"wiki", "manual", "book"}):
+        if hit.chunk_id not in same_page_ids:
+            candidates.setdefault(hit.chunk_id, hit)
+
+    for hit in adjacent_chunk_hits(page_hits[:8], radius=1, limit=TRANSLATE_CONTEXT_LIMIT):
+        if hit.chunk_id not in same_page_ids and hit.material_type in {"wiki", "manual", "book"}:
+            candidates.setdefault(hit.chunk_id, hit)
+
+    def rank(hit: SearchHit) -> tuple[int, float, int]:
+        material_rank = 0 if hit.material_type == "wiki" else 1
+        return (material_rank, hit.score, hit.chunk_index)
+
+    return sorted(candidates.values(), key=rank)[:TRANSLATE_CONTEXT_LIMIT]
+
+
+def translation_page_text(page_hits: list[SearchHit]) -> str:
+    grouped: dict[str, list[SearchHit]] = {}
+    for hit in page_hits:
+        grouped.setdefault(hit.page or "", []).append(hit)
+    parts = []
+    for page, hits in sorted(grouped.items(), key=lambda item: page_number(item[0]) or 10**9):
+        parts.append(f"## Page {page or '?'}")
+        for hit in sorted(hits, key=lambda item: item.chunk_index):
+            parts.append(hit.text)
+    text = "\n\n".join(parts)
+    if len(text) > TRANSLATE_TEXT_CHAR_LIMIT:
+        text = text[:TRANSLATE_TEXT_CHAR_LIMIT].rsplit(" ", 1)[0] + "\n\n[文本过长，已截断]"
+    return text
+
+
+def call_translation_llm(source_path: str, pages: str, page_text: str, context_hits: list[SearchHit], target_language: str, config: AppConfig) -> str:
+    url = f"{config.llm_base_url}/chat/completions"
+    system_prompt = (
+        "You are an EDA documentation translation and formatting assistant. Translate the selected PDF pages into the target language. "
+        "Use the selected page text as the source of truth, and use the reference excerpts from the full indexed wiki/manual/book database to understand terminology, commands, options, and domain context. "
+        "Preserve technical tokens in the original form, including commands, rule names, options, variables, file paths, filenames, code, units, and product terms. "
+        "Do not invent missing text or convert this into a Q&A answer. If extraction/OCR text appears broken, translate cautiously and mark unclear fragments as 原文不清. "
+        "Return polished, readable Markdown. Keep one section per source page using headings like ## p.N. "
+        "Use short paragraphs, bullet lists, and Markdown tables when the source text is list-like or option-heavy. "
+        "Use **bold** for translated section labels or important warnings, and `inline code` for commands, options, variables, paths, file names, and rule names. "
+        "Do not produce one dense paragraph. Preserve source line breaks when they represent steps, options, or examples, but remove meaningless PDF extraction line wraps. "
+        "When reference excerpts are needed to clarify a term, add a concise 术语说明 section and cite the relevant reference with bracket numbers like [1]. "
+        "Do not cite every translated sentence; only cite extra knowledge from references. "
+        "End with a short 来源说明 section listing whether extra database knowledge was used."
+    )
+    payload = {
+        "model": config.llm_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Target language: {target_language}\n"
+                    f"Source PDF: {source_path}\n"
+                    f"Pages: {pages}\n\n"
+                    f"Reference excerpts from indexed knowledge database:\n{llm_context(context_hits, TRANSLATE_CONTEXT_LIMIT, 1200)}\n\n"
+                    f"Page text to translate:\n{page_text}"
+                ),
+            },
+        ],
+        "temperature": 0.1,
+    }
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config.llm_api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=config.llm_timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return str(data["choices"][0]["message"]["content"]).strip()
+    except Exception as exc:
+        raise RuntimeError(f"DocTrans LLM failed: {exc}") from exc
+
+
+def translate_pages(source_path: str, page_start: Any, page_end: Any, target_language: str, llm_config: Any = None) -> dict[str, Any]:
+    config = config_from_payload(llm_config)
+    if not config.llm_enabled:
+        raise PermissionError("DocTrans requires personal LLM settings")
+    start = int(page_start)
+    end = int(page_end)
+    target = target_language.strip() or "中文"
+    page_hits = pdf_page_hits(source_path, start, end)
+    context_hits = translation_context_hits(page_hits)
+    pages = f"{start}-{end}" if start != end else str(start)
+    markdown = call_translation_llm(
+        unquote(source_path).strip(),
+        pages,
+        translation_page_text(page_hits),
+        context_hits,
+        target,
+        config,
+    )
+    source_hits = context_hits[:TRANSLATE_CONTEXT_LIMIT] + page_hits[:6]
+    return {"translation_markdown": markdown, "sources": source_payload(source_hits), "pages": pages}
 
 
 def script_query(script_text: str, filename: str = "") -> str:
@@ -1949,12 +2262,13 @@ def script_context(hits: list[SearchHit]) -> str:
 def call_script_annotation_llm(script_text: str, filename: str, hits: list[SearchHit], config: AppConfig) -> str:
     url = f"{config.llm_base_url}/chat/completions"
     system_prompt = (
-        "You are an EDA script documentation assistant. Answer in Chinese. "
-        "Create a structured Markdown explanation document for the provided script. "
-        "Use the provided wiki/manual/book excerpts to explain commands, rules, options, inputs, outputs, and risks. "
-        "Do not rewrite the script unless needed for a small quoted example. "
-        "If a command is not covered by the excerpts, mark it as 未在资料中确认 instead of guessing. "
-        "Use this structure: 脚本整体用途, 执行流程, 关键命令/规则说明, 参数和 option 说明, 输入输出文件, 潜在风险和注意事项, Manual/Wiki 来源. "
+        "You are an EDA Rule Comment and user guide assistant. Answer in Chinese. "
+        "Create a structured Markdown document that explains the provided rule/script using only the provided wiki/manual/book excerpts. "
+        "Explain rules, commands, options, inputs, outputs, use cases, execution flow, and risks. "
+        "Add practical user-guide guidance for how a user should read, run, modify, and verify the rule/script. "
+        "Do not rewrite the full script; quote only small examples when needed. "
+        "If a command, option, behavior, or recommendation is not covered by the excerpts, mark it as 未在资料中确认 instead of guessing. "
+        "Use this structure: Rule/Script 概览, 执行流程, 关键规则/命令说明, 参数和 option 说明, 输入输出文件, User Guide, 潜在风险和注意事项, Manual/Wiki 来源. "
         "Cite sources inline with bracket numbers like [1], [2]."
     )
     payload = {
@@ -2408,7 +2722,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/manual-search":
             try:
                 params = parse_qs(parsed.query)
-                self.send_json(manual_search_payload(params.get("source_path", [""])[0], params.get("q", [""])[0]))
+                self.send_json(
+                    manual_search_payload(
+                        params.get("source_path", [""])[0],
+                        params.get("q", [""])[0],
+                        int(params.get("page", ["1"])[0] or 1),
+                        int(params.get("page_size", ["6"])[0] or 6),
+                    )
+                )
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             except KeyError as exc:
@@ -2512,6 +2833,28 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json_with_cookie({"ok": True}, cookie_header("", max_age=0))
             return
 
+        if self.path == "/api/change-password":
+            user = self.require_user()
+            if not user:
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                change_user_password(
+                    int(user["id"]),
+                    str(payload.get("current_password", "")),
+                    str(payload.get("new_password", "")),
+                    self.cookie_token(),
+                )
+                self.send_json({"ok": True})
+            except PermissionError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
+            except (ValueError, KeyError) as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except json.JSONDecodeError as exc:
+                self.send_json({"error": f"invalid JSON request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
         if self.path == "/api/users":
             if not self.require_admin():
                 return
@@ -2570,6 +2913,29 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.send_json({"error": f"chat request failed: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
+        if self.path == "/api/translate-pages":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                self.send_json(
+                    translate_pages(
+                        str(payload.get("source_path", "")),
+                        payload.get("page_start", ""),
+                        payload.get("page_end", ""),
+                        str(payload.get("target_language", "中文")),
+                        payload.get("llm_config"),
+                    )
+                )
+            except PermissionError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except (ValueError, KeyError) as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except json.JSONDecodeError as exc:
+                self.send_json({"error": f"invalid JSON request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            except Exception as exc:
+                self.send_json({"error": f"DocTrans failed: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
         if self.path == "/api/reindex":
             self.send_json(reindex_all())
             return
@@ -2603,7 +2969,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             target_dir.mkdir(parents=True, exist_ok=True)
             for filename, content in files:
                 suffix = Path(filename).suffix.lower()
-                if suffix not in SUPPORTED_EXTENSIONS:
+                if suffix not in RAW_SUPPORTED_EXTENSIONS:
                     continue
                 with (target_dir / filename).open("wb") as fh:
                     fh.write(content)
@@ -2649,7 +3015,7 @@ def run(host: str, port: int, debug: bool = False) -> None:
     print(sqlite_runtime_message(), file=sys.stderr)
     maybe_incremental_index(force=True)
     if user_count() == 0:
-        print("No users configured. Create an admin first: python3 server.py --create-admin admin", file=sys.stderr)
+        print("No users configured. Create an admin first: python3.9 server.py --create-admin admin", file=sys.stderr)
     server = ThreadingHTTPServer((host, port), AppHandler)
     print(f"EDA Tools Navigator is running at http://{host}:{port}")
     try:
@@ -2664,7 +3030,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--reindex", action="store_true")
     parser.add_argument("--create-admin", metavar="USERNAME", help="create the initial admin user")
-    parser.add_argument("--password", help="password for --create-admin; omit to prompt")
+    parser.add_argument("--create-user", metavar="USERNAME", help="create a regular user; default password is the username")
+    parser.add_argument("--password", help="password for --create-admin or --create-user")
     parser.add_argument("-debug", "--debug", action="store_true", help="enable legacy debug flag; maintenance UI is not shown")
     args = parser.parse_args()
 
@@ -2673,6 +3040,12 @@ def main() -> None:
 
         password = args.password or getpass.getpass("Admin password: ")
         user = create_user(args.create_admin, password, role="admin")
+        print(json.dumps(user, ensure_ascii=False, indent=2))
+        return
+
+    if args.create_user:
+        password = args.password or args.create_user
+        user = create_user(args.create_user, password, role="user")
         print(json.dumps(user, ensure_ascii=False, indent=2))
         return
 

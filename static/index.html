@@ -10,7 +10,7 @@
     <section id="loginView" class="login-view hidden" aria-label="登录">
       <form id="loginForm" class="login-card">
         <div>
-          <h1>EDA Tools Navigator</h1>
+          <h1>EDA NAVIGATOR</h1>
           <p>登录后访问 raw materials、wiki 问答和脚本注解工作区。</p>
         </div>
         <label>
@@ -30,35 +30,56 @@
       <aside class="materials-panel" aria-label="Raw materials">
         <header>
           <div>
-            <h1>Navigator</h1>
+            <h1>EDA NAVIGATOR</h1>
             <p id="sessionMeta">未登录</p>
           </div>
-          <button id="logoutBtn" class="secondary-button" type="button">退出</button>
         </header>
         <div id="titleMeta" class="title-meta" aria-label="系统状态"></div>
+        <section class="current-pdf-search" aria-label="Current PDF search">
+          <form id="readerSearchForm" class="manual-search" autocomplete="off">
+            <label>
+              当前 PDF 查找
+              <input id="readerSearch" placeholder="输入关键词，仅查找当前 PDF" />
+            </label>
+            <button type="submit" class="secondary-button">查找</button>
+          </form>
+          <div id="readerSearchStatus" class="search-status">打开 PDF 后可查找当前文档的索引文本。</div>
+          <div id="readerSearchResults" class="search-results"></div>
+          <div id="readerSearchPager" class="search-pager hidden">
+            <button id="readerSearchPrev" class="secondary-button" type="button">上一页</button>
+            <span id="readerSearchPageInfo"></span>
+            <button id="readerSearchNext" class="secondary-button" type="button">下一页</button>
+          </div>
+        </section>
         <section class="navigator-tools" aria-label="Manual navigation">
-          <h2>Quick Manuals</h2>
-          <div id="quickManuals" class="quick-manuals"></div>
           <form id="manualSearchForm" class="manual-search" autocomplete="off">
             <label>
-              搜索页面
-              <input id="manualSearch" list="manualOptions" placeholder="输入 manual id，例如 calbr_ver_user" />
+              PDF Manuals
+              <input id="manualSearch" list="manualOptions" placeholder="输入 PDF manual id 或标题" />
             </label>
             <datalist id="manualOptions"></datalist>
           </form>
         </section>
         <div id="materialsList" class="materials-list"></div>
+        <section class="quick-manual-section" aria-label="Quick manuals">
+          <h2>Quick Manuals</h2>
+          <div id="quickManuals" class="quick-manuals"></div>
+        </section>
+        <section class="account-section" aria-label="User account">
+          <button id="accountBtn" class="account-button" type="button" aria-expanded="false">
+            <span id="accountName">未登录</span>
+            <small id="accountRole">点击登录</small>
+          </button>
+          <div id="accountMenu" class="account-menu hidden">
+            <div id="accountInfo" class="account-info">未登录</div>
+            <button id="accountLoginBtn" class="secondary-button" type="button">登录</button>
+            <button id="accountSettingsBtn" class="secondary-button" type="button">Settings</button>
+            <button id="accountLogoutBtn" class="secondary-button" type="button">退出</button>
+          </div>
+        </section>
       </aside>
 
       <section class="reader-panel" aria-label="Material viewer">
-        <form id="readerSearchForm" class="reader-search" autocomplete="off">
-          <label>
-            PDF 查找
-            <input id="readerSearch" placeholder="在当前 PDF 索引文本中查找并跳页" />
-          </label>
-          <button type="submit" class="secondary-button">查找</button>
-          <span id="readerSearchStatus">也可使用浏览器 PDF 工具栏内置查找做页内精确定位。</span>
-        </form>
         <iframe id="materialFrame" title="Material viewer"></iframe>
       </section>
 
@@ -67,9 +88,9 @@
       <aside id="workPanel" class="work-panel" aria-label="Chat and script tools">
         <header class="work-header">
           <div class="tabs" role="tablist">
-            <button id="chatTab" class="tab active" type="button">LLM-WIKI</button>
-            <button id="scriptTab" class="tab" type="button">Scripts Comment</button>
-            <button id="settingsTab" class="tab" type="button">Settings</button>
+            <button id="chatTab" class="tab active" type="button">KnowQuery</button>
+            <button id="docTransTab" class="tab" type="button">DocTrans</button>
+            <button id="scriptTab" class="tab" type="button">CodeInterp</button>
           </div>
           <button id="togglePanelBtn" class="icon-button" type="button" aria-label="展开或收起右侧区域">⇔</button>
         </header>
@@ -77,50 +98,92 @@
         <section id="chatPane" class="pane">
           <div id="messages" class="messages"></div>
           <form id="chatForm" class="composer" novalidate>
-            <textarea id="question" rows="3" placeholder="例如：根据 raw materials 解释 Calibre PERC rule 的 options 和用例"></textarea>
+            <textarea id="question" rows="3" placeholder="例如：根据 raw materials 解释某个 rule 的 options、用法和用例"></textarea>
             <button type="submit">发送</button>
           </form>
         </section>
 
+        <section id="docTransPane" class="pane hidden">
+          <form id="docTransForm" class="doc-trans-form">
+            <div class="doc-trans-row">
+              <label>
+                起始页
+                <input id="docTransStart" type="number" min="1" step="1" />
+              </label>
+              <label>
+                结束页
+                <input id="docTransEnd" type="number" min="1" step="1" />
+              </label>
+              <button id="docTransBtn" type="submit">确认</button>
+            </div>
+            <p id="docTransStatus" class="toast" role="status"></p>
+          </form>
+          <div id="docTransResult" class="annotation-result"></div>
+        </section>
+
         <section id="scriptPane" class="pane hidden">
           <div class="script-toolbar">
-            <button id="chooseWorkspaceBtn" class="secondary-button" type="button">选择本地目录</button>
-            <button id="saveScriptBtn" class="secondary-button" type="button">保存脚本</button>
             <button id="downloadAnnotationBtn" class="secondary-button" type="button" disabled>下载注解</button>
           </div>
           <input id="scriptFile" type="file" />
-          <textarea id="scriptText" class="script-input" rows="12" placeholder="粘贴或上传整份工具脚本"></textarea>
-          <button id="annotateBtn" type="button">生成结构化注解</button>
+          <textarea id="scriptText" class="script-input" rows="12" placeholder="粘贴或上传 rule/script，基于 manual/wiki 生成 user guide"></textarea>
+          <button id="annotateBtn" type="button">Interpreting</button>
           <div id="annotationResult" class="annotation-result"></div>
-        </section>
-
-        <section id="settingsPane" class="pane hidden">
-          <form id="settingsForm" class="stack-form">
-            <label>
-              LLM Base URL
-              <input id="llmBaseUrl" name="llm_base_url" placeholder="https://your-llm.example.com/v1" autocomplete="off" />
-            </label>
-            <label>
-              Model
-              <input id="llmModel" name="llm_model" placeholder="internal-llm" autocomplete="off" />
-            </label>
-            <label>
-              API Key
-              <input id="llmApiKey" name="llm_api_key" type="password" autocomplete="new-password" />
-            </label>
-            <label>
-              Timeout 秒
-              <input id="llmTimeout" name="llm_timeout" type="number" min="5" max="600" step="1" />
-            </label>
-            <div class="form-actions">
-              <button type="submit">保存设置</button>
-              <button id="clearSettingsBtn" type="button" class="secondary-button">清空</button>
-            </div>
-            <p id="settingsStatus" class="toast" role="status"></p>
-          </form>
         </section>
       </aside>
     </main>
+
+    <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div id="settingsBackdrop" class="modal-backdrop"></div>
+      <section class="modal-card">
+        <header class="modal-header">
+          <h2 id="settingsTitle">Settings</h2>
+          <button id="closeSettingsBtn" class="icon-button" type="button" aria-label="关闭 Settings">×</button>
+        </header>
+        <form id="settingsForm" class="stack-form">
+          <label>
+            LLM Base URL
+            <input id="llmBaseUrl" name="llm_base_url" placeholder="https://your-llm.example.com/v1" autocomplete="off" />
+          </label>
+          <label>
+            Model
+            <input id="llmModel" name="llm_model" placeholder="internal-llm" autocomplete="off" />
+          </label>
+          <label>
+            API Key
+            <input id="llmApiKey" name="llm_api_key" type="password" autocomplete="new-password" />
+          </label>
+          <label>
+            Timeout 秒
+            <input id="llmTimeout" name="llm_timeout" type="number" min="5" max="600" step="1" />
+          </label>
+          <div class="form-actions">
+            <button type="submit">保存设置</button>
+            <button id="clearSettingsBtn" type="button" class="secondary-button">清空</button>
+          </div>
+          <p id="settingsStatus" class="toast" role="status"></p>
+        </form>
+        <form id="passwordForm" class="stack-form password-form">
+          <h3>修改密码</h3>
+          <label>
+            当前密码
+            <input id="currentPassword" name="current_password" type="password" autocomplete="current-password" />
+          </label>
+          <label>
+            新密码
+            <input id="newPassword" name="new_password" type="password" autocomplete="new-password" />
+          </label>
+          <label>
+            确认新密码
+            <input id="confirmPassword" name="confirm_password" type="password" autocomplete="new-password" />
+          </label>
+          <div class="form-actions">
+            <button type="submit">修改密码</button>
+          </div>
+          <p id="passwordStatus" class="toast" role="status"></p>
+        </form>
+      </section>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>

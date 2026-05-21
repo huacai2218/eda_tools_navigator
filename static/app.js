@@ -5,7 +5,6 @@ const appView = $("#appView");
 const loginForm = $("#loginForm");
 const loginStatus = $("#loginStatus");
 const sessionMeta = $("#sessionMeta");
-const logoutBtn = $("#logoutBtn");
 const titleMeta = $("#titleMeta");
 const materialsList = $("#materialsList");
 const quickManuals = $("#quickManuals");
@@ -15,6 +14,11 @@ const manualOptions = $("#manualOptions");
 const readerSearchForm = $("#readerSearchForm");
 const readerSearch = $("#readerSearch");
 const readerSearchStatus = $("#readerSearchStatus");
+const readerSearchResults = $("#readerSearchResults");
+const readerSearchPager = $("#readerSearchPager");
+const readerSearchPrev = $("#readerSearchPrev");
+const readerSearchNext = $("#readerSearchNext");
+const readerSearchPageInfo = $("#readerSearchPageInfo");
 const materialFrame = $("#materialFrame");
 const workPanel = $("#workPanel");
 const splitter = $("#splitter");
@@ -26,9 +30,16 @@ const scriptFile = $("#scriptFile");
 const scriptText = $("#scriptText");
 const annotateBtn = $("#annotateBtn");
 const annotationResult = $("#annotationResult");
-const chooseWorkspaceBtn = $("#chooseWorkspaceBtn");
-const saveScriptBtn = $("#saveScriptBtn");
+const docTransForm = $("#docTransForm");
+const docTransStart = $("#docTransStart");
+const docTransEnd = $("#docTransEnd");
+const docTransBtn = $("#docTransBtn");
+const docTransStatus = $("#docTransStatus");
+const docTransResult = $("#docTransResult");
 const downloadAnnotationBtn = $("#downloadAnnotationBtn");
+const settingsModal = $("#settingsModal");
+const settingsBackdrop = $("#settingsBackdrop");
+const closeSettingsBtn = $("#closeSettingsBtn");
 const settingsForm = $("#settingsForm");
 const clearSettingsBtn = $("#clearSettingsBtn");
 const settingsStatus = $("#settingsStatus");
@@ -36,15 +47,31 @@ const llmBaseUrlInput = $("#llmBaseUrl");
 const llmModelInput = $("#llmModel");
 const llmApiKeyInput = $("#llmApiKey");
 const llmTimeoutInput = $("#llmTimeout");
+const passwordForm = $("#passwordForm");
+const currentPasswordInput = $("#currentPassword");
+const newPasswordInput = $("#newPassword");
+const confirmPasswordInput = $("#confirmPassword");
+const passwordStatus = $("#passwordStatus");
+const accountBtn = $("#accountBtn");
+const accountName = $("#accountName");
+const accountRole = $("#accountRole");
+const accountMenu = $("#accountMenu");
+const accountInfo = $("#accountInfo");
+const accountLoginBtn = $("#accountLoginBtn");
+const accountSettingsBtn = $("#accountSettingsBtn");
+const accountLogoutBtn = $("#accountLogoutBtn");
 
 const SETTINGS_KEY = "edaToolsNavigator.llmSettings";
-const SCRIPT_STORE_KEY = "edaToolsNavigator.lastScript";
 let currentUser = null;
 let activeSourcePath = "";
 let activeMaterialKind = "";
 let latestAnnotationMarkdown = "";
-let directoryHandle = null;
 let manualCandidates = [];
+let pdfManualCandidates = [];
+let readerSearchQuery = "";
+let readerSearchPage = 1;
+let readerSearchHasPrev = false;
+let readerSearchHasNext = false;
 
 async function readJsonResponse(res) {
   let data = {};
@@ -106,49 +133,90 @@ function sourceLabel(source, index) {
   return `[${index}] ${type}${source.tool} / ${source.title}${page}`;
 }
 
-function openMaterial(url, sourcePath = "") {
-  if (!url) return;
-  activeSourcePath = sourcePath || activeSourcePath;
-  const path = sourcePath || "";
-  activeMaterialKind = path.toLowerCase().endsWith(".pdf") ? "pdf" : "";
-  if (readerSearchStatus) {
-    readerSearchStatus.textContent = activeMaterialKind === "pdf"
-      ? "也可使用浏览器 PDF 工具栏内置查找做页内精确定位。"
-      : "当前不是 PDF，查找会基于已索引文本跳转到相关位置。";
-  }
-  materialFrame.src = url;
+function pdfNavigationUrl(url) {
+  const [baseWithQuery, hash = ""] = url.split("#", 2);
+  const separator = baseWithQuery.includes("?") ? "&" : "?";
+  const cacheBusted = `${baseWithQuery}${separator}nav=${Date.now()}`;
+  const hashParams = new URLSearchParams(hash.replace(/^#/, ""));
+  if (!hashParams.has("zoom")) hashParams.set("zoom", "page-width");
+  if (!hashParams.has("pagemode")) hashParams.set("pagemode", "bookmarks");
+  return `${cacheBusted}#${hashParams.toString()}`;
 }
 
-function renderTextWithCitations(container, text, sources) {
-  const pattern = /\[(\d+)\]/g;
+function openMaterial(url, sourcePath = "", options = {}) {
+  if (!url) return;
+  const isPdf = (sourcePath || "").toLowerCase().endsWith(".pdf") || url.includes(".pdf");
+  if (!isPdf) {
+    if (readerSearchStatus) {
+      readerSearchStatus.textContent = "中间 Manual viewer 仅显示 PDF。非 PDF 来源请在引用链接中另行打开。";
+    }
+    return;
+  }
+  activeSourcePath = sourcePath || activeSourcePath;
+  const path = sourcePath || "";
+  activeMaterialKind = "pdf";
+  if (readerSearchStatus) {
+    readerSearchStatus.textContent = activeMaterialKind === "pdf"
+      ? "可查找当前 PDF 的索引文本，点击结果跳转到对应页。"
+      : "当前不是 PDF，请先在左侧打开一个 PDF manual。";
+  }
+  if (!options.keepSearch) {
+    if (readerSearchResults) readerSearchResults.innerHTML = "";
+    if (readerSearchPager) readerSearchPager.classList.add("hidden");
+    readerSearchQuery = "";
+    readerSearchPage = 1;
+  }
+  const targetUrl = pdfNavigationUrl(url);
+  materialFrame.src = "about:blank";
+  requestAnimationFrame(() => {
+    materialFrame.src = targetUrl;
+  });
+}
+
+function appendCitation(container, index, sources) {
+  const source = sources[index - 1];
+  if (!source) {
+    container.appendChild(document.createTextNode(`[${index}]`));
+    return;
+  }
+  const link = document.createElement("a");
+  link.className = "citation";
+  link.href = source.source_url || `/source?chunk_id=${source.chunk_id}`;
+  link.textContent = `[${index}]`;
+  link.title = sourceLabel(source, index);
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.addEventListener("click", (event) => {
+    if ((source.source_path || "").toLowerCase().endsWith(".pdf") || link.href.includes(".pdf")) {
+      event.preventDefault();
+      openMaterial(link.href, source.source_path);
+    }
+  });
+  container.appendChild(link);
+}
+
+function appendInline(container, text, sources, depth = 0) {
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[(\d+)\])/g;
   let lastIndex = 0;
   let match;
   while ((match = pattern.exec(text)) !== null) {
     if (match.index > lastIndex) container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-    const index = Number(match[1]);
-    const source = sources[index - 1];
-    if (!source) {
-      container.appendChild(document.createTextNode(match[0]));
-      lastIndex = pattern.lastIndex;
-      continue;
+    const token = match[0];
+    if (match[2]) {
+      appendCitation(container, Number(match[2]), sources);
+    } else if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      container.appendChild(code);
+    } else if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      if (depth < 2) appendInline(strong, token.slice(2, -2), sources, depth + 1);
+      else strong.textContent = token.slice(2, -2);
+      container.appendChild(strong);
     }
-    const link = document.createElement("a");
-    link.className = "citation";
-    link.href = source.source_url || `/source?chunk_id=${source.chunk_id}`;
-    link.textContent = `[${index}]`;
-    link.title = sourceLabel(source, index);
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      openMaterial(link.href, source.source_path);
-    });
-    container.appendChild(link);
     lastIndex = pattern.lastIndex;
   }
   if (lastIndex < text.length) container.appendChild(document.createTextNode(text.slice(lastIndex)));
-}
-
-function appendInline(container, text, sources) {
-  renderTextWithCitations(container, text, sources);
 }
 
 function renderMarkdown(container, text, sources = []) {
@@ -239,10 +307,60 @@ function addMessage(role, text, sources = []) {
 }
 
 function showPane(name) {
-  ["chat", "script", "settings"].forEach((pane) => {
+  ["chat", "docTrans", "script"].forEach((pane) => {
     $(`#${pane}Pane`).classList.toggle("hidden", pane !== name);
     $(`#${pane}Tab`).classList.toggle("active", pane === name);
   });
+}
+
+function openSettingsModal() {
+  applySettings();
+  settingsStatus.textContent = "";
+  passwordStatus.textContent = "";
+  passwordForm.reset();
+  settingsModal.classList.remove("hidden");
+  llmBaseUrlInput.focus();
+}
+
+function closeSettingsModal() {
+  settingsModal.classList.add("hidden");
+}
+
+function openLoginModal() {
+  loginStatus.textContent = "";
+  loginView.classList.remove("hidden");
+  $("#loginUsername").focus();
+}
+
+function closeAccountMenu() {
+  accountMenu.classList.add("hidden");
+  accountBtn.setAttribute("aria-expanded", "false");
+}
+
+function toggleAccountMenu() {
+  const willOpen = accountMenu.classList.contains("hidden");
+  accountMenu.classList.toggle("hidden", !willOpen);
+  accountBtn.setAttribute("aria-expanded", String(willOpen));
+}
+
+function updateAccountUi() {
+  if (currentUser) {
+    accountName.textContent = currentUser.username;
+    accountRole.textContent = currentUser.role;
+    sessionMeta.textContent = `${currentUser.username} (${currentUser.role})`;
+    accountInfo.textContent = `用户：${currentUser.username} / ${currentUser.role}`;
+    accountLoginBtn.classList.add("hidden");
+    accountSettingsBtn.classList.remove("hidden");
+    accountLogoutBtn.classList.remove("hidden");
+  } else {
+    accountName.textContent = "未登录";
+    accountRole.textContent = "点击登录";
+    sessionMeta.textContent = "未登录";
+    accountInfo.textContent = "未登录";
+    accountLoginBtn.classList.remove("hidden");
+    accountSettingsBtn.classList.add("hidden");
+    accountLogoutBtn.classList.add("hidden");
+  }
 }
 
 function renderBadges(status) {
@@ -274,6 +392,7 @@ function manualButton(item, className = "material-link") {
 }
 
 function renderManualSearch(manuals = []) {
+  pdfManualCandidates = manuals;
   manualCandidates = manuals;
   manualOptions.innerHTML = "";
   manuals.forEach((item) => {
@@ -287,28 +406,86 @@ function renderManualSearch(manuals = []) {
 function openManualFromSearch() {
   const query = manualSearch.value.trim().toLowerCase();
   if (!query) return;
-  const item = manualCandidates.find((manual) => manual.manual_id.toLowerCase() === query)
-    || manualCandidates.find((manual) => manual.manual_id.toLowerCase().includes(query) || manual.title.toLowerCase().includes(query));
+  const item = pdfManualCandidates.find((manual) => manual.manual_id.toLowerCase() === query)
+    || pdfManualCandidates.find((manual) => manual.manual_id.toLowerCase().includes(query)
+      || manual.title.toLowerCase().includes(query)
+      || manual.source_path.toLowerCase().includes(query));
   if (item) {
     manualSearch.value = item.manual_id;
     openMaterial(item.view_url, item.source_path);
   }
 }
 
+function renderReaderSearchResults(data) {
+  const results = data.results || [];
+  readerSearchResults.innerHTML = "";
+  readerSearchPage = Number(data.page || readerSearchPage || 1);
+  results.forEach((result) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "search-result";
+    const badge = result.is_toc ? '<em>目录</em>' : "";
+    button.innerHTML = `
+      <strong><small>p.</small>${escapeHtml(result.page || "1")}</strong>
+      ${badge}
+      <span>${escapeHtml(result.excerpt || "")}</span>
+    `;
+    button.addEventListener("click", () => {
+      openMaterial(result.view_url, result.source_path, { keepSearch: true });
+      readerSearchStatus.textContent = `已跳到 p.${result.page || "1"}。`;
+    });
+    readerSearchResults.appendChild(button);
+  });
+
+  readerSearchHasPrev = Boolean(data.has_prev);
+  readerSearchHasNext = Boolean(data.has_next);
+  readerSearchPrev.disabled = !readerSearchHasPrev;
+  readerSearchNext.disabled = !readerSearchHasNext;
+  readerSearchPageInfo.textContent = `${data.page || 1} / ${Math.max(1, Math.ceil((data.total || 0) / (data.page_size || 6)))}`;
+  readerSearchPager.classList.toggle("hidden", !results.length || (!readerSearchHasPrev && !readerSearchHasNext));
+  readerSearchStatus.textContent = `找到 ${data.total || 0} 条匹配，点击结果跳转到 PDF 对应页。`;
+}
+
+async function searchCurrentPdf(page = 1) {
+  const query = readerSearch.value.trim();
+  if (!query) return;
+  if (!activeSourcePath || activeMaterialKind !== "pdf") {
+    readerSearchStatus.textContent = "请先打开一个 PDF manual。";
+    return;
+  }
+  readerSearchQuery = query;
+  readerSearchPage = page;
+  readerSearchStatus.textContent = "正在查找当前 PDF 索引文本...";
+  try {
+    const params = new URLSearchParams({
+      source_path: activeSourcePath,
+      q: readerSearchQuery,
+      page: String(readerSearchPage),
+      page_size: "6",
+    });
+    const data = await fetch(`/api/manual-search?${params.toString()}`).then(readJsonResponse);
+    renderReaderSearchResults(data);
+  } catch (error) {
+    readerSearchResults.innerHTML = "";
+    readerSearchPager.classList.add("hidden");
+    readerSearchStatus.textContent = `未找到：${networkErrorMessage(error)}。如 PDF 新增或变更，请先后台 reindex。`;
+  }
+}
+
 function renderMaterials(data) {
   materialsList.innerHTML = "";
   quickManuals.innerHTML = "";
-  renderManualSearch(data.manuals || data.html_manuals || []);
+  renderManualSearch(data.pdf_manuals || []);
 
   (data.quick_manuals || []).forEach((item) => {
     quickManuals.appendChild(manualButton(item, "quick-manual"));
   });
 
-  if (!(data.manuals || []).length) {
-    materialsList.innerHTML = '<p class="empty">暂无 raw manual 候选。管理员需要把材料放到 raw/ 后在后台运行 reindex。</p>';
+  if (data.default_view_url && !materialFrame.src) openMaterial(data.default_view_url, data.default_source_path);
+  if (!(data.pdf_manuals || []).length) {
+    materialsList.innerHTML = '<p class="empty">暂无 PDF manual。管理员需要把 PDF 放到 raw/manuals/ 后在后台运行 reindex。</p>';
     return;
   }
-  if (data.default_view_url && !materialFrame.src) openMaterial(data.default_view_url, data.default_source_path);
 }
 
 async function refreshAppData() {
@@ -324,8 +501,8 @@ async function showApp(user) {
   currentUser = user;
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
-  sessionMeta.textContent = `${user.username} (${user.role})`;
-  addMessage("assistant", "已进入工作台。你可以在左侧切换 manual 页面，在右侧询问 manual/wiki 或注解脚本。");
+  updateAccountUi();
+  addMessage("assistant", "已进入工作台。左侧切换和查找 PDF manual；右侧可用 KnowQuery、DocTrans 和 CodeInterp。");
   await refreshAppData();
 }
 
@@ -334,10 +511,12 @@ async function checkSession() {
   if (data.user) {
     await showApp(data.user);
   } else {
-    appView.classList.add("hidden");
+    currentUser = null;
+    appView.classList.remove("hidden");
     loginView.classList.remove("hidden");
+    updateAccountUi();
     if (data.bootstrap_required) {
-      loginStatus.textContent = "尚未创建管理员。请先在服务器执行：python3 server.py --create-admin admin";
+      loginStatus.textContent = "尚未创建管理员。请先在服务器执行：python3.9 server.py --create-admin admin";
     }
   }
 }
@@ -351,15 +530,39 @@ loginForm.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: $("#loginUsername").value, password: $("#loginPassword").value }),
     }).then(readJsonResponse);
+    closeAccountMenu();
     await showApp(data.user);
   } catch (error) {
     loginStatus.textContent = networkErrorMessage(error);
   }
 });
 
-logoutBtn.addEventListener("click", async () => {
+async function logout() {
   await fetch("/api/logout", { method: "POST" });
   location.reload();
+}
+
+accountBtn.addEventListener("click", () => {
+  if (!currentUser) openLoginModal();
+  else toggleAccountMenu();
+});
+
+accountLoginBtn.addEventListener("click", () => {
+  closeAccountMenu();
+  openLoginModal();
+});
+
+accountSettingsBtn.addEventListener("click", () => {
+  closeAccountMenu();
+  openSettingsModal();
+});
+
+accountLogoutBtn.addEventListener("click", logout);
+
+document.addEventListener("click", (event) => {
+  if (!accountMenu.classList.contains("hidden") && !event.target.closest(".account-section")) {
+    closeAccountMenu();
+  }
 });
 
 chatForm.addEventListener("submit", async (event) => {
@@ -368,7 +571,7 @@ chatForm.addEventListener("submit", async (event) => {
   if (!question) return;
   addMessage("user", question);
   questionInput.value = "";
-  const pending = addMessage("assistant", "正在检索 wiki 和 raw materials...");
+  const pending = addMessage("assistant", personalLlmEnabled() ? "正在创造..." : "正在检索...");
   try {
     const data = await fetch("/api/chat", {
       method: "POST",
@@ -399,17 +602,21 @@ manualSearch.addEventListener("keydown", (event) => {
 
 readerSearchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const query = readerSearch.value.trim();
-  if (!query || !activeSourcePath) return;
-  readerSearchStatus.textContent = "正在查找当前 manual 索引文本...";
-  try {
-    const params = new URLSearchParams({ source_path: activeSourcePath, q: query });
-    const data = await fetch(`/api/manual-search?${params.toString()}`).then(readJsonResponse);
-    openMaterial(data.view_url, data.source_path);
-    readerSearchStatus.textContent = `已跳到匹配页 ${data.page || "1"}。可继续用浏览器 PDF 内置查找做页内精确定位。`;
-  } catch (error) {
-    readerSearchStatus.textContent = `未找到：${networkErrorMessage(error)}`;
-  }
+  searchCurrentPdf(1);
+});
+
+readerSearchPrev.addEventListener("click", () => {
+  if (readerSearchHasPrev) searchCurrentPdf(Math.max(1, readerSearchPage - 1));
+});
+
+readerSearchNext.addEventListener("click", () => {
+  if (readerSearchHasNext) searchCurrentPdf(readerSearchPage + 1);
+});
+
+closeSettingsBtn.addEventListener("click", closeSettingsModal);
+settingsBackdrop.addEventListener("click", closeSettingsModal);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !settingsModal.classList.contains("hidden")) closeSettingsModal();
 });
 
 settingsForm.addEventListener("submit", (event) => {
@@ -431,39 +638,84 @@ clearSettingsBtn.addEventListener("click", () => {
   refreshAppData();
 });
 
+passwordForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  passwordStatus.textContent = "";
+  const currentPassword = currentPasswordInput.value;
+  const newPassword = newPasswordInput.value;
+  const confirmPassword = confirmPasswordInput.value;
+  if (!currentPassword || !newPassword) {
+    passwordStatus.textContent = "请输入当前密码和新密码。";
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    passwordStatus.textContent = "两次输入的新密码不一致。";
+    return;
+  }
+  try {
+    await fetch("/api/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }).then(readJsonResponse);
+    passwordForm.reset();
+    passwordStatus.textContent = "密码已修改。";
+  } catch (error) {
+    passwordStatus.textContent = networkErrorMessage(error);
+  }
+});
+
+docTransForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  docTransResult.innerHTML = "";
+  if (!activeSourcePath || activeMaterialKind !== "pdf") {
+    docTransStatus.textContent = "请先在中间栏打开一个 PDF manual。";
+    return;
+  }
+  const pageStart = Number(docTransStart.value);
+  const pageEnd = Number(docTransEnd.value);
+  if (!Number.isInteger(pageStart) || !Number.isInteger(pageEnd) || pageStart < 1 || pageEnd < pageStart) {
+    docTransStatus.textContent = "请输入有效页码范围，结束页不能小于起始页。";
+    return;
+  }
+  if (pageEnd - pageStart + 1 > 20) {
+    docTransStatus.textContent = "单次最多翻译 20 页，请缩小范围。";
+    return;
+  }
+  docTransBtn.disabled = true;
+  docTransBtn.textContent = "翻译中...";
+  docTransStatus.textContent = "正在读取当前 PDF 页文本并调用个人 LLM...";
+  try {
+    const data = await fetch("/api/translate-pages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_path: activeSourcePath,
+        page_start: pageStart,
+        page_end: pageEnd,
+        target_language: "中文",
+        llm_config: getLlmSettings(),
+      }),
+    }).then(readJsonResponse);
+    renderMarkdown(docTransResult, data.translation_markdown || "没有返回翻译内容。", data.sources || []);
+    docTransStatus.textContent = `已翻译 p.${data.pages || `${pageStart}-${pageEnd}`}。`;
+  } catch (error) {
+    docTransStatus.textContent = networkErrorMessage(error);
+  } finally {
+    docTransBtn.disabled = false;
+    docTransBtn.textContent = "确认";
+  }
+});
+
 scriptFile.addEventListener("change", async () => {
   const file = scriptFile.files && scriptFile.files[0];
   if (!file) return;
   scriptText.value = await file.text();
 });
 
-chooseWorkspaceBtn.addEventListener("click", async () => {
-  if ("showDirectoryPicker" in window) {
-    directoryHandle = await window.showDirectoryPicker();
-    annotationResult.textContent = `已选择本地目录：${directoryHandle.name}`;
-  } else {
-    annotationResult.textContent = "当前浏览器不支持真实目录授权，将使用浏览器本地存储。";
-  }
-});
-
-saveScriptBtn.addEventListener("click", async () => {
-  const content = scriptText.value;
-  if (!content.trim()) return;
-  if (directoryHandle) {
-    const handle = await directoryHandle.getFileHandle(`script-${Date.now()}.txt`, { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(content);
-    await writable.close();
-    annotationResult.textContent = "脚本已保存到本地目录。";
-  } else {
-    localStorage.setItem(SCRIPT_STORE_KEY, content);
-    annotationResult.textContent = "脚本已保存到浏览器本地存储。";
-  }
-});
-
 annotateBtn.addEventListener("click", async () => {
   annotateBtn.disabled = true;
-  annotateBtn.textContent = "注解中...";
+  annotateBtn.textContent = "Interpreting...";
   annotationResult.textContent = "";
   try {
     const data = await fetch("/api/annotate-script", {
@@ -482,7 +734,7 @@ annotateBtn.addEventListener("click", async () => {
     annotationResult.textContent = networkErrorMessage(error);
   } finally {
     annotateBtn.disabled = false;
-    annotateBtn.textContent = "生成结构化注解";
+    annotateBtn.textContent = "Interpreting";
   }
 });
 
@@ -492,12 +744,12 @@ downloadAnnotationBtn.addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "script-annotation.md";
+  link.download = "code-interp.md";
   link.click();
   URL.revokeObjectURL(url);
 });
 
-["chat", "script", "settings"].forEach((name) => {
+["chat", "docTrans", "script"].forEach((name) => {
   $(`#${name}Tab`).addEventListener("click", () => showPane(name));
 });
 
@@ -528,7 +780,6 @@ questionInput.addEventListener("keydown", (event) => {
 });
 
 applySettings();
-scriptText.value = localStorage.getItem(SCRIPT_STORE_KEY) || "";
 checkSession().catch((error) => {
   loginView.classList.remove("hidden");
   loginStatus.textContent = networkErrorMessage(error);

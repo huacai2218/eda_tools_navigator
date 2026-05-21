@@ -4,8 +4,8 @@ set -euo pipefail
 APP_DIR="$(pwd)"
 SERVICE_NAME="eda-tools-reader"
 RESTART_SERVICE="auto"
-INSTALL_DEPS="true"
 PACKAGE=""
+PYTHON_BOOTSTRAP_BIN="${PYTHON_BIN:-python3.9}"
 
 usage() {
   cat <<'EOF'
@@ -17,11 +17,11 @@ Options:
   --service NAME         systemd service name. Default: eda-tools-reader.
   --restart              Restart service after patch.
   --no-restart           Do not restart service.
-  --skip-deps            Skip pip install. Use when dependencies are already installed.
   -h, --help             Show help.
 
 The patch preserves raw/, data/, .env, .venv, backups/, and dist/.
-Run python server.py --reindex separately when raw/wiki indexes need rebuilding.
+The patch process is offline-safe: it does not create a venv or install Python dependencies.
+Run python3.9 server.py --reindex separately when raw/wiki indexes need rebuilding.
 EOF
 }
 
@@ -41,10 +41,6 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-restart)
       RESTART_SERVICE="no"
-      shift
-      ;;
-    --skip-deps)
-      INSTALL_DEPS="false"
       shift
       ;;
     -h|--help)
@@ -124,18 +120,6 @@ tar -czf "$BACKUP_FILE" -C "$APP_DIR" \
 
 cd "$APP_DIR"
 
-if [ ! -d ".venv" ]; then
-  echo "Creating Python virtual environment..."
-  python3 -m venv .venv
-fi
-
-if [ "$INSTALL_DEPS" = "true" ]; then
-  echo "Installing Python dependencies..."
-  .venv/bin/python -m pip install -r "$PATCH_DIR/requirements.txt"
-else
-  echo "Dependency installation skipped."
-fi
-
 echo "Applying patch files..."
 copy_item() {
   local item="$1"
@@ -157,8 +141,16 @@ copy_item "scripts"
 
 chmod +x "$APP_DIR/scripts/"*.sh 2>/dev/null || true
 
+PYTHON_BIN="$PYTHON_BOOTSTRAP_BIN"
+if [ -x "$APP_DIR/.venv/bin/python" ]; then
+  PYTHON_BIN="$APP_DIR/.venv/bin/python"
+elif ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "$PYTHON_BOOTSTRAP_BIN not found and .venv/bin/python is not available; cannot run syntax check." >&2
+  exit 1
+fi
+
 echo "Checking Python syntax..."
-.venv/bin/python -m py_compile server.py
+"$PYTHON_BIN" -m py_compile server.py
 
 service_exists() {
   command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1

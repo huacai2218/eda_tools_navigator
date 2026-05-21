@@ -7,6 +7,7 @@ RESTART_SERVICE="auto"
 RUN_REINDEX="false"
 INSTALL_DEPS="true"
 PACKAGE=""
+PYTHON_BOOTSTRAP_BIN="${PYTHON_BIN:-python3.9}"
 
 usage() {
   cat <<'EOF'
@@ -18,7 +19,7 @@ Options:
   --service NAME         systemd service name. Default: eda-tools-reader.
   --restart              Restart service after upgrade.
   --no-restart           Do not restart service.
-  --reindex              Run python server.py --reindex after upgrade.
+  --reindex              Run python3.9 server.py --reindex after upgrade.
   --skip-deps            Skip pip install. Use when dependencies are already installed.
   -h, --help             Show help.
 
@@ -129,12 +130,18 @@ cd "$APP_DIR"
 
 if [ ! -d ".venv" ]; then
   echo "Creating Python virtual environment..."
-  python3 -m venv .venv
+  if ! command -v "$PYTHON_BOOTSTRAP_BIN" >/dev/null 2>&1; then
+    echo "$PYTHON_BOOTSTRAP_BIN not found. Install Python 3.9 or set PYTHON_BIN=/path/to/python3.9." >&2
+    exit 1
+  fi
+  "$PYTHON_BOOTSTRAP_BIN" -m venv .venv
 fi
+
+PYTHON_BIN="$APP_DIR/.venv/bin/python"
 
 if [ "$INSTALL_DEPS" = "true" ]; then
   echo "Installing Python dependencies..."
-  .venv/bin/python -m pip install -r "$RELEASE_DIR/requirements.txt"
+  "$PYTHON_BIN" -m pip install -r "$RELEASE_DIR/requirements.txt"
 else
   echo "Dependency installation skipped."
 fi
@@ -162,11 +169,11 @@ rm -f "$APP_DIR/Dockerfile" "$APP_DIR/docker-compose.yml"
 chmod +x "$APP_DIR/scripts/"*.sh 2>/dev/null || true
 
 echo "Checking Python syntax..."
-.venv/bin/python -m py_compile server.py
+"$PYTHON_BIN" -m py_compile server.py
 
 if [ "$RUN_REINDEX" = "true" ]; then
   echo "Rebuilding index..."
-  .venv/bin/python server.py --reindex
+  "$PYTHON_BIN" server.py --reindex
 fi
 
 service_exists() {
