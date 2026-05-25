@@ -97,6 +97,13 @@
 
         <section id="chatPane" class="pane">
           <div id="messages" class="messages"></div>
+          <div class="chat-options">
+            <label class="toggle-option">
+              <input id="currentPdfOnly" type="checkbox" />
+              <span>仅当前 PDF</span>
+            </label>
+            <small>开启后 KnowQuery 只使用中间栏当前打开 PDF 的文本进行解答。</small>
+          </div>
           <form id="chatForm" class="composer" novalidate>
             <textarea id="question" rows="3" placeholder="例如：根据 raw materials 解释某个 rule 的 options、用法和用例"></textarea>
             <button type="submit">发送</button>

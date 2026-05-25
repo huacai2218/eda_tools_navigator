@@ -548,8 +548,39 @@ body.dragging {
 
 #chatPane {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   padding: 0;
+}
+
+.chat-options {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 12px;
+}
+
+.chat-options small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.toggle-option {
+  align-items: center;
+  color: var(--ink);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.toggle-option input {
+  accent-color: var(--accent);
+  height: 16px;
+  padding: 0;
+  width: 16px;
 }
 
 .messages {

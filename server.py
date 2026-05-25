@@ -56,6 +56,7 @@ PROTECTED_API_PREFIXES = (
     "/api/materials",
     "/api/wiki/search",
     "/api/chat",
+    "/api/chat-history",
     "/api/annotate-script",
     "/api/translate-pages",
     "/api/change-password",
@@ -502,6 +503,85 @@ def list_users() -> list[dict[str, Any]]:
         conn.close()
 
 
+def add_chat_message(
+    user_id: int,
+    role: str,
+    content: str,
+    sources: list[dict[str, Any]] | None = None,
+    active_source_path: str = "",
+    current_pdf_only: bool = False,
+) -> None:
+    if role not in {"user", "assistant"}:
+        raise ValueError("invalid chat role")
+    conn = connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO chat_messages(
+                user_id,
+                role,
+                content,
+                sources_json,
+                active_source_path,
+                current_pdf_only,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                role,
+                content,
+                json.dumps(sources or [], ensure_ascii=False),
+                active_source_path,
+                1 if current_pdf_only else 0,
+                time.time(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_chat_messages(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit or 200), 500))
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, role, content, sources_json, active_source_path, current_pdf_only, created_at
+            FROM chat_messages
+            WHERE user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    messages = []
+    for row in reversed(rows):
+        try:
+            sources = json.loads(row["sources_json"] or "[]")
+            if not isinstance(sources, list):
+                sources = []
+        except json.JSONDecodeError:
+            sources = []
+        messages.append(
+            {
+                "id": int(row["id"]),
+                "role": row["role"],
+                "content": row["content"],
+                "sources": sources,
+                "active_source_path": row["active_source_path"],
+                "current_pdf_only": bool(row["current_pdf_only"]),
+                "created_at": row["created_at"],
+            }
+        )
+    return messages
+
+
 def cookie_header(token: str, max_age: int = SESSION_TTL_SECONDS) -> str:
     return f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}"
 
@@ -644,6 +724,22 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            sources_json TEXT NOT NULL DEFAULT '[]',
+            active_source_path TEXT NOT NULL DEFAULT '',
+            current_pdf_only INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_user_time ON chat_messages(user_id, created_at)")
 
     if sqlite_supports_fts5():
         fts_schema = conn.execute(
@@ -1291,6 +1387,85 @@ def search(query: str, limit: int = 8, material_types: set[str] | None = None) -
     return rows_to_hits(rows)
 
 
+def search_source_legacy(query: str, source_path: str, limit: int = 8) -> list[SearchHit]:
+    terms = query_terms(query)
+    if not terms:
+        return []
+
+    clauses = []
+    params: list[Any] = []
+    for term in terms[:8]:
+        pattern = f"%{term}%"
+        clauses.append("(lower(c.text) LIKE ? OR lower(d.title) LIKE ?)")
+        params.extend([pattern, pattern])
+
+    conn = connect()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+                c.id AS chunk_id,
+                c.chunk_index,
+                d.material_type,
+                d.tool,
+                d.title,
+                d.source_path,
+                c.page,
+                c.text,
+                0.0 AS score
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE d.source_path = ?
+              AND ({' OR '.join(clauses)})
+            LIMIT ?
+            """,
+            (source_path, *params, max(limit * 12, 240)),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    hits = rows_to_hits(rows)
+    for hit in hits:
+        hit.score = -legacy_match_score(hit, terms)
+    return sorted(hits, key=lambda hit: hit.score)[:limit]
+
+
+def search_source(query: str, source_path: str, limit: int = 8) -> list[SearchHit]:
+    if not sqlite_supports_fts5():
+        return search_source_legacy(query, source_path, limit)
+
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                c.id AS chunk_id,
+                c.chunk_index,
+                d.material_type,
+                d.tool,
+                d.title,
+                d.source_path,
+                c.page,
+                c.text,
+                bm25(chunks_fts) AS score
+            FROM chunks_fts
+            JOIN chunks c ON c.id = chunks_fts.rowid
+            JOIN documents d ON d.id = c.document_id
+            WHERE chunks_fts MATCH ?
+              AND d.source_path = ?
+            ORDER BY score
+            LIMIT ?
+            """,
+            (fts_query(query), source_path, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        conn.close()
+
+    return rows_to_hits(rows)
+
+
 def document_intro_hits(terms: list[str], limit: int = 12) -> list[SearchHit]:
     if not terms:
         return []
@@ -1495,6 +1670,81 @@ def build_rag_hits(query: str, limit: int = ANSWER_CONTEXT_LIMIT) -> list[Search
         selected = expand_usage_context(selected, query, limit=limit)
 
     return selected
+
+
+def indexed_source_chunk_count(source_path: str) -> int:
+    conn = connect()
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(c.id) AS n
+            FROM documents d
+            LEFT JOIN chunks c ON c.document_id = d.id
+            WHERE d.source_path = ?
+            """,
+            (source_path,),
+        ).fetchone()
+        return int(row["n"] if row else 0)
+    finally:
+        conn.close()
+
+
+def normalized_current_pdf_source(source_path: str) -> str:
+    decoded = unquote(source_path).strip()
+    if not decoded:
+        raise ValueError("current PDF source_path is required")
+    path = manual_file_path(decoded)
+    if path.suffix.lower() != ".pdf":
+        raise ValueError("current PDF mode only supports PDF files")
+    return relative_source(path)
+
+
+def build_current_pdf_hits(query: str, source_path: str, limit: int = ANSWER_CONTEXT_LIMIT) -> list[SearchHit]:
+    maybe_incremental_index()
+    decoded_source = normalized_current_pdf_source(source_path)
+    if indexed_source_chunk_count(decoded_source) <= 0:
+        raise KeyError("current PDF is not indexed; run python3.9 server.py --reindex on the server")
+
+    terms = query_terms(query)
+    concept_question = is_concept_question(query)
+    usage_question = is_usage_question(query)
+    candidates: dict[int, SearchHit] = {}
+
+    for hit in search_source(query, decoded_source, limit=SEARCH_CANDIDATE_LIMIT):
+        candidates.setdefault(hit.chunk_id, hit)
+
+    if concept_question and terms:
+        expanded_query = " ".join(terms + ["overview", "introduction", "flow", "concept", "manual", "guide"])
+        for hit in search_source(expanded_query, decoded_source, limit=SEARCH_CANDIDATE_LIMIT):
+            candidates.setdefault(hit.chunk_id, hit)
+
+    if usage_question and terms:
+        usage_query = " ".join(terms + ["usage", "arguments", "options", "keywords", "examples", "syntax"])
+        usage_seeds = search_source(usage_query, decoded_source, limit=SEARCH_CANDIDATE_LIMIT)
+        for hit in usage_seeds:
+            candidates.setdefault(hit.chunk_id, hit)
+        for hit in adjacent_chunk_hits(usage_seeds[:10], radius=2, limit=40):
+            if hit.source_path == decoded_source:
+                candidates.setdefault(hit.chunk_id, hit)
+
+    relevant_candidates = []
+    for hit in candidates.values():
+        searchable = f"{hit.title} {hit.source_path} {hit.text[:900] if concept_question else hit.text}".lower()
+        if terms and not any(term in searchable for term in terms):
+            continue
+        relevant_candidates.append(hit)
+
+    ranked = sorted(
+        relevant_candidates,
+        key=lambda hit: hit_rank(query, hit, terms, concept_question, usage_question),
+        reverse=True,
+    )
+
+    selected = ranked[:limit]
+    if usage_question:
+        selected = expand_usage_context(selected, query, limit=limit)
+        selected = [hit for hit in selected if hit.source_path == decoded_source]
+    return selected[: max(limit, LLM_CONTEXT_LIMIT + 8)]
 
 
 def page_context_hits(seed_hits: list[SearchHit], limit: int = 18) -> list[SearchHit]:
@@ -2063,10 +2313,21 @@ def call_llm(question: str, hits: list[SearchHit], config: AppConfig) -> str:
         raise RuntimeError("LLM API response format is not OpenAI-compatible") from exc
 
 
-def answer_question(question: str, llm_config: Any = None) -> dict[str, Any]:
+def answer_question(
+    question: str,
+    llm_config: Any = None,
+    active_source_path: str = "",
+    current_pdf_only: bool = False,
+) -> dict[str, Any]:
     config = config_from_payload(llm_config)
-    hits = build_rag_hits(question)
+    hits = build_current_pdf_hits(question, active_source_path) if current_pdf_only else build_rag_hits(question)
     if not hits:
+        if current_pdf_only:
+            return {
+                "answer": "没有在当前 PDF 的已索引文本中检索到足够相关的内容。可以换一个关键词，或请管理员在服务器后台重建索引。",
+                "sources": [],
+                "mode": "current_pdf",
+            }
         return {
             "answer": "没有在已导入的 raw materials 中检索到足够相关的内容。可以换一个关键词，或请管理员先导入对应材料后重建索引。",
             "sources": [],
@@ -2085,6 +2346,8 @@ def answer_question(question: str, llm_config: Any = None) -> dict[str, Any]:
 
     visible_limit = USAGE_LLM_CONTEXT_LIMIT if config.llm_enabled and is_usage_question(question) else LLM_CONTEXT_LIMIT
     visible_hits = hits[:visible_limit] if config.llm_enabled else hits
+    if current_pdf_only:
+        visible_hits = [hit for hit in visible_hits if hit.source_path == normalized_current_pdf_source(active_source_path)]
     return {"answer": answer, "sources": source_payload(visible_hits), "mode": answer_mode}
 
 
@@ -2774,6 +3037,18 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"results": source_payload(hits)})
             return
 
+        if parsed.path == "/api/chat-history":
+            user = self.require_user()
+            if not user:
+                return
+            params = parse_qs(parsed.query)
+            try:
+                limit = int(params.get("limit", ["200"])[0] or 200)
+            except ValueError:
+                limit = 200
+            self.send_json({"messages": list_chat_messages(int(user["id"]), limit=limit)})
+            return
+
         if parsed.path == "/api/manual-search":
             try:
                 params = parse_qs(parsed.query)
@@ -2955,13 +3230,46 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/chat":
             try:
+                user = self.current_user()
+                if not user:
+                    self.send_json({"error": "login required"}, HTTPStatus.UNAUTHORIZED)
+                    return
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length) or b"{}")
                 question = str(payload.get("question", "")).strip()
                 if not question:
                     self.send_json({"error": "question is required"}, HTTPStatus.BAD_REQUEST)
                     return
-                self.send_json(answer_question(question, payload.get("llm_config")))
+                active_source_path = str(payload.get("active_source_path", ""))
+                current_pdf_only = bool(payload.get("current_pdf_only", False))
+                result = answer_question(
+                    question,
+                    payload.get("llm_config"),
+                    active_source_path,
+                    current_pdf_only,
+                )
+                add_chat_message(
+                    int(user["id"]),
+                    "user",
+                    question,
+                    active_source_path=active_source_path,
+                    current_pdf_only=current_pdf_only,
+                )
+                add_chat_message(
+                    int(user["id"]),
+                    "assistant",
+                    str(result.get("answer", "")),
+                    result.get("sources") if isinstance(result.get("sources"), list) else [],
+                    active_source_path=active_source_path,
+                    current_pdf_only=current_pdf_only,
+                )
+                self.send_json(result)
+            except (ValueError, PermissionError) as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except FileNotFoundError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except KeyError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
             except json.JSONDecodeError as exc:
                 self.send_json({"error": f"invalid JSON request: {exc}"}, HTTPStatus.BAD_REQUEST)
             except Exception as exc:

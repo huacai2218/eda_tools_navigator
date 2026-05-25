@@ -26,6 +26,7 @@ const togglePanelBtn = $("#togglePanelBtn");
 const messages = $("#messages");
 const chatForm = $("#chatForm");
 const questionInput = $("#question");
+const currentPdfOnlyInput = $("#currentPdfOnly");
 const scriptFile = $("#scriptFile");
 const scriptText = $("#scriptText");
 const annotateBtn = $("#annotateBtn");
@@ -306,6 +307,27 @@ function addMessage(role, text, sources = []) {
   return article;
 }
 
+function renderChatWelcome() {
+  addMessage("assistant", "已进入工作台。左侧切换和查找 PDF manual；右侧可用 KnowQuery、DocTrans 和 CodeInterp。");
+}
+
+async function loadChatHistory() {
+  messages.innerHTML = "";
+  try {
+    const data = await fetch("/api/chat-history?limit=200").then(readJsonResponse);
+    const history = data.messages || [];
+    if (!history.length) {
+      renderChatWelcome();
+      return;
+    }
+    history.forEach((message) => {
+      addMessage(message.role === "user" ? "user" : "assistant", message.content || "", message.sources || []);
+    });
+  } catch (error) {
+    renderChatWelcome();
+  }
+}
+
 function showPane(name) {
   ["chat", "docTrans", "script"].forEach((pane) => {
     $(`#${pane}Pane`).classList.toggle("hidden", pane !== name);
@@ -502,8 +524,8 @@ async function showApp(user) {
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
   updateAccountUi();
-  addMessage("assistant", "已进入工作台。左侧切换和查找 PDF manual；右侧可用 KnowQuery、DocTrans 和 CodeInterp。");
   await refreshAppData();
+  await loadChatHistory();
 }
 
 async function checkSession() {
@@ -569,14 +591,27 @@ chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const question = questionInput.value.trim();
   if (!question) return;
+  const currentPdfOnly = currentPdfOnlyInput.checked;
+  if (currentPdfOnly && (!activeSourcePath || activeMaterialKind !== "pdf")) {
+    addMessage("assistant", "请先在中间栏打开一个 PDF manual，再启用“仅当前 PDF”。");
+    return;
+  }
   addMessage("user", question);
   questionInput.value = "";
-  const pending = addMessage("assistant", personalLlmEnabled() ? "正在创造..." : "正在检索...");
+  const pendingText = currentPdfOnly
+    ? (personalLlmEnabled() ? "正在基于当前 PDF 创造..." : "正在检索当前 PDF...")
+    : (personalLlmEnabled() ? "正在创造..." : "正在检索...");
+  const pending = addMessage("assistant", pendingText);
   try {
     const data = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, active_source_path: activeSourcePath, llm_config: getLlmSettings() }),
+      body: JSON.stringify({
+        question,
+        active_source_path: activeSourcePath,
+        current_pdf_only: currentPdfOnly,
+        llm_config: getLlmSettings(),
+      }),
     }).then(readJsonResponse);
     pending.remove();
     addMessage("assistant", data.answer || "没有返回结果。", data.sources || []);
